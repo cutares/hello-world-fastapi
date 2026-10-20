@@ -1,0 +1,271 @@
+diff --git a/android/app/build.gradle b/android/app/build.gradle
+index a7f3b7d..3c08b25 100644
+--- a/android/app/build.gradle
++++ b/android/app/build.gradle
+@@ -110,7 +110,7 @@ android {
+ 
+     namespace "cn.toside.music.mobile"
+     defaultConfig {
+-        applicationId "cn.toside.music.mobile"
++        applicationId "com.luna.music"
+         minSdkVersion rootProject.ext.minSdkVersion
+         targetSdkVersion rootProject.ext.targetSdkVersion
+         versionCode verCode
+@@ -126,23 +126,6 @@ android {
+         }
+     }
+     signingConfigs {
+-        release {
+-            if (project.hasProperty('MYAPP_UPLOAD_STORE_FILE')) {
+-                storeFile file(MYAPP_UPLOAD_STORE_FILE)
+-                storePassword MYAPP_UPLOAD_STORE_PASSWORD
+-                keyAlias MYAPP_UPLOAD_KEY_ALIAS
+-                keyPassword MYAPP_UPLOAD_KEY_PASSWORD
+-            } else {
+-                def keystorePropertiesFile = rootProject.file("keystore.properties")
+-                def keystoreProperties = new Properties()
+-                keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+-
+-                storeFile file(keystoreProperties['storeFile'])
+-                storePassword keystoreProperties['storePassword']
+-                keyAlias keystoreProperties['keyAlias']
+-                keyPassword keystoreProperties['keyPassword']
+-            }
+-        }
+         debug {
+             storeFile file('debug.keystore')
+             storePassword 'android'
+@@ -161,7 +144,7 @@ android {
+             minifyEnabled enableProguardInReleaseBuilds
+             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+ 
+-            signingConfig signingConfigs.release
++            signingConfig signingConfigs.debug
+         }
+     }
+ 
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+index f203997..814b76b 100644
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -95,7 +95,7 @@
+       <!-- note this is the authority name used by other modules like rn-fetch-blob, easy to have conflicts -->
+       <provider
+         android:name="androidx.core.content.FileProvider"
+-        android:authorities="${applicationId}.provider"
++        android:authorities="cn.luna.music.lxfilesx.provider"
+         android:exported="false"
+         android:grantUriPermissions="true">
+         <!-- you might need the tools:replace thing to workaround rn-fetch-blob or other definitions of provider -->
+diff --git a/package.json b/package.json
+index bd9d2ce..733e64f 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "lx-music-mobile",
+-  "version": "1.9.1",
+-  "versionCode": 78,
++  "version": "1.9.1-originos-queue1",
++  "versionCode": 79,
+   "private": true,
+   "scripts": {
+     "dev": "react-native run-android --active-arch-only",
+diff --git a/src/config/constant.ts b/src/config/constant.ts
+index b70b252..eebfeab 100644
+--- a/src/config/constant.ts
++++ b/src/config/constant.ts
+@@ -95,7 +95,7 @@ export const storageDataPrefixOld = {
+   notificationTipEnable: '@notification_tip_enable',
+ } as const
+ 
+-export const APP_PROVIDER_NAME = 'cn.toside.music.mobile.provider'
++export const APP_PROVIDER_NAME = 'cn.luna.music.lxfilesx.provider'
+ 
+ 
+ export const NAV_MENUS = [
+diff --git a/src/core/player/player.ts b/src/core/player/player.ts
+index 1fd9049..54c6d6c 100644
+--- a/src/core/player/player.ts
++++ b/src/core/player/player.ts
+@@ -28,6 +28,7 @@ import { checkIgnoringBatteryOptimization, checkNotificationPermission, debounce
+ import { LIST_IDS } from '@/config/constant'
+ import { addListMusics, removeListMusics } from '@/core/list'
+ import { addDislikeInfo } from '@/core/dislikeList'
++import { getSystemQueueSelection, syncSystemQueue } from '@/plugins/player/systemQueue'
+ 
+ // import { checkMusicFileAvailable } from '@renderer/utils/music'
+ 
+@@ -666,3 +667,27 @@ export const dislikeMusic = async() => {
+   await playNext(true)
+ }
+ 
++
++/** Select display-queue metadata through LX's URL resolution, never a native queue index. */
++export const playSystemQueueItem = async(id: unknown) => {
++  const selected = getSystemQueueSelection(id)
++  if (!selected) return
++  if (selected.kind === 'current') {
++    if (playerState.playMusicInfo.musicInfo?.id === selected.musicInfo.id && playerState.playMusicInfo.listId === selected.listId) play()
++    return
++  }
++  if (selected.kind === 'temp') {
++    const index = playerState.tempPlayList.findIndex(item => item.listId === selected.listId && item.musicInfo.id === selected.musicInfo.id)
++    if (index < 0) { syncSystemQueue(); return }
++    const item = playerState.tempPlayList[index]
++    removeTempPlayList(index)
++    setPlayMusicInfo(item.listId, item.musicInfo, true)
++  } else {
++    if (selected.listId !== playerState.playInfo.playerListId) return
++    const musicInfo = getList(selected.listId).find(item => item.id === selected.musicInfo.id)
++    if (!musicInfo) { syncSystemQueue(); return }
++    setPlayMusicInfo(selected.listId, musicInfo, false)
++    if (settingState.setting['player.isAutoCleanPlayedList']) clearPlayedList()
++  }
++  await handlePlay()
++}
+diff --git a/src/plugins/player/index.ts b/src/plugins/player/index.ts
+index 441e6cd..db4e09d 100644
+--- a/src/plugins/player/index.ts
++++ b/src/plugins/player/index.ts
+@@ -1,4 +1,5 @@
+ import TrackPlayer from 'react-native-track-player'
++import { initializeSystemQueue, syncSystemQueue } from './systemQueue'
+ import { updateOptions, setVolume, setPlaybackRate, migratePlayerCache } from './utils'
+ 
+ // const listenEvent = () => {
+@@ -38,6 +39,8 @@ const initial = async({ volume, playRate, cacheSize, isHandleAudioFocus, isEnabl
+   global.lx.playerStatus.isInitialized = true
+   global.lx.playerStatus.isIniting = false
+   await updateOptions()
++  initializeSystemQueue()
++  syncSystemQueue(true)
+   await setVolume(volume)
+   await setPlaybackRate(playRate)
+   // listenEvent()
+diff --git a/src/plugins/player/service.ts b/src/plugins/player/service.ts
+index 91b2502..36c70ae 100644
+--- a/src/plugins/player/service.ts
++++ b/src/plugins/player/service.ts
+@@ -6,7 +6,7 @@ import { isTempId, isEmpty } from './utils'
+ // import { play as lrcPlay, pause as lrcPause } from '@/core/lyric'
+ import { exitApp } from '@/core/common'
+ import { getCurrentTrackId } from './playList'
+-import { pause, play, playNext, playPrev } from '@/core/player/player'
++import { pause, play, playNext, playPrev, playSystemQueueItem } from '@/core/player/player'
+ 
+ let isInitialized = false
+ 
+@@ -28,6 +28,10 @@ const registerPlaybackService = async() => {
+   if (isInitialized) return
+ 
+   console.log('reg services...')
++  TrackPlayer.addEventListener(TPEvent.RemotePlayId, ({ id }) => {
++    void playSystemQueueItem(id).catch(error => { console.warn('System queue selection failed', error) })
++  })
++
+   TrackPlayer.addEventListener(TPEvent.RemotePlay, () => {
+     // console.log('remote-play')
+     play()
+diff --git a/src/plugins/player/utils.ts b/src/plugins/player/utils.ts
+index 9d52867..9c4142a 100644
+--- a/src/plugins/player/utils.ts
++++ b/src/plugins/player/utils.ts
+@@ -260,6 +260,8 @@ export const updateOptions = async(options = {
+     Capability.Pause,
+     Capability.Stop,
+     Capability.SeekTo,
++    Capability.Skip,
++    Capability.PlayFromId,
+     Capability.SkipToNext,
+     Capability.SkipToPrevious,
+   ],
+diff --git a/src/plugins/player/systemQueue.ts b/src/plugins/player/systemQueue.ts
+new file mode 100644
+index 0000000..402bef4
+--- /dev/null
++++ b/src/plugins/player/systemQueue.ts
+@@ -0,0 +1,83 @@
++import { NativeModules, Platform } from 'react-native'
++import playerState from '@/store/player/state'
++import { getList } from '@/core/player/playInfo'
++
++interface Selection { kind: 'list' | 'temp' | 'current', listId: string | null, musicInfo: LX.Player.PlayMusic }
++interface QueueEntry { id: string, title: string, artist: string, album: string }
++const limit = 200
++let selections = new Map<string, Selection>()
++let initialized = false
++let scheduled = false
++let lastPayload = ''
++let updating = Promise.resolve()
++const makeId = (entry: Selection) => JSON.stringify([entry.kind, entry.listId, entry.musicInfo.id])
++
++// Do not resolve stream URLs or change the playback queue for display metadata.
++const buildQueue = () => {
++  const current = playerState.playMusicInfo
++  const mainListId = playerState.playInfo.playerListId
++  const source = getList(mainListId)
++  const currentIndex = source.findIndex(music => music.id === current.musicInfo?.id)
++  const start = Math.max(0, currentIndex - Math.floor(limit / 2))
++  const entries: Selection[] = []
++  if (current.musicInfo && (current.isTempPlay || currentIndex < 0)) {
++    entries.push({ kind: 'current', listId: current.listId, musicInfo: current.musicInfo })
++  }
++  // Reserve some room for explicitly queued "play later" entries.
++  const tempLimit = Math.min(playerState.tempPlayList.length, 50)
++  for (const item of source.slice(start, start + limit - tempLimit - entries.length)) {
++    entries.push({ kind: 'list', listId: mainListId, musicInfo: item })
++  }
++  for (const item of playerState.tempPlayList.slice(0, tempLimit)) {
++    entries.push({ kind: 'temp', listId: item.listId, musicInfo: item.musicInfo })
++  }
++  const nextSelections = new Map<string, Selection>()
++  const tracks: QueueEntry[] = []
++  let activeId = ''
++  for (const entry of entries) {
++    const id = makeId(entry)
++    if (nextSelections.has(id) || id.length > 512) continue
++    nextSelections.set(id, entry)
++    const music = 'progress' in entry.musicInfo ? entry.musicInfo.metadata.musicInfo : entry.musicInfo
++    tracks.push({ id, title: music.name.slice(0, 128), artist: music.singer.slice(0, 128), album: (music.meta.albumName ?? '').slice(0, 128) })
++    if (entry.kind !== 'temp' && entry.musicInfo.id === current.musicInfo?.id && entry.listId === current.listId) activeId = id
++  }
++  return { nextSelections, tracks, activeId }
++}
++
++export const getSystemQueueSelection = (id: unknown): Selection | undefined => typeof id === 'string' ? selections.get(id) : undefined
++
++export const syncSystemQueue = (force = false) => {
++  if (Platform.OS !== 'android' || !global.lx.playerStatus.isInitialized || typeof NativeModules.TrackPlayerModule?.setSystemQueue !== 'function') return
++  // Serialise native writes; always build from the latest JS state at execution time.
++  updating = updating.then(async() => {
++    const { nextSelections, tracks, activeId } = buildQueue()
++    selections = nextSelections
++    const payload = JSON.stringify([tracks, activeId])
++    if (!force && payload === lastPayload) return
++    await NativeModules.TrackPlayerModule.setSystemQueue(tracks, activeId)
++    // Native writes and this cache update are serialised by the updating promise chain.
++    // eslint-disable-next-line require-atomic-updates
++    lastPayload = payload
++  }).catch((error: unknown) => { console.warn('System queue sync failed', error) })
++}
++
++export const initializeSystemQueue = () => {
++  if (initialized) return
++  initialized = true
++  const schedule = () => {
++    if (scheduled) return
++    scheduled = true
++    setTimeout(() => {
++      scheduled = false
++      syncSystemQueue()
++    }, 0)
++  }
++  global.app_event.on('musicToggled', schedule)
++  global.app_event.on('myListMusicUpdate', schedule)
++  global.app_event.on('downloadListUpdate', schedule)
++  global.state_event.on('playInfoChanged', schedule)
++  global.state_event.on('playTempPlayListChanged', schedule)
++  global.state_event.on('playMusicInfoChanged', schedule)
++  schedule()
++}

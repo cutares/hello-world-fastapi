@@ -1,0 +1,54 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const ts = require('../../source/node_modules/typescript');
+const source = fs.readFileSync(require('node:path').join(__dirname, '../../source/src/plugins/player/systemQueue.ts'), 'utf8');
+const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+const music = id => ({ id: String(id), name: `Song ${id}`, singer: 'Singer', meta: { albumName: 'Album' } });
+function fixture() {
+  const state = { playMusicInfo: { musicInfo: music(4), listId: 'main', isTempPlay: false }, playInfo: { playerListId: 'main' }, tempPlayList: [] };
+  let list = Array.from({ length: 10 }, (_, i) => music(i));
+  const calls = [];
+  const events = {};
+  const module = { exports: {} };
+  const ctx = { exports: module.exports, module, console, setTimeout, global: { lx: { playerStatus: { isInitialized: true } }, app_event: { on: (name, fn) => { events[name] = fn } }, state_event: { on: (name, fn) => { events[name] = fn } } }, require: name => {
+    if (name === 'react-native') return { Platform: { OS: 'android' }, NativeModules: { TrackPlayerModule: { setSystemQueue: async(...args) => { calls.push(args) } } } };
+    if (name === '@/store/player/state') return { default: state };
+    if (name === '@/core/player/playInfo') return { getList: () => list };
+    throw Error(name);
+  } };
+  vm.runInNewContext(compiled, ctx);
+  return { state, calls, events, api: module.exports, setList: next => { list = next }, ctx };
+}
+const flush = () => new Promise(resolve => setTimeout(resolve, 5));
+(async() => {
+  const f = fixture();
+  f.api.syncSystemQueue(); await flush();
+  assert.equal(f.calls[0][0].length, 10);
+  assert.equal(JSON.parse(f.calls[0][1])[2], '4');
+  assert.equal(f.api.getSystemQueueSelection(f.calls[0][1]).musicInfo.id, '4');
+  assert.equal(f.api.getSystemQueueSelection('untrusted-id'), undefined);
+  assert.equal(JSON.stringify(f.calls[0]).includes('url'), false);
+  f.api.syncSystemQueue(); await flush(); assert.equal(f.calls.length, 1, 'unchanged payload deduped');
+  f.setList(Array.from({ length: 10000 }, (_, i) => music(i)));
+  f.state.playMusicInfo.musicInfo = music(8000);
+  f.state.tempPlayList = Array.from({ length: 80 }, (_, i) => ({ listId: 'temp', musicInfo: music(`t${i}`) }));
+  f.api.syncSystemQueue(); await flush();
+  assert.equal(f.calls[1][0].length, 200);
+  assert.equal(JSON.parse(f.calls[1][1])[2], '8000');
+  assert.equal(f.calls[1][0].filter(x => JSON.parse(x.id)[0] === 'temp').length, 50);
+  assert.equal(f.api.getSystemQueueSelection(f.calls[0][1]), undefined, 'stale IDs removed');
+  f.state.playMusicInfo = { listId: 'another', musicInfo: music('current-temp'), isTempPlay: true };
+  f.api.syncSystemQueue(); await flush();
+  assert.equal(JSON.parse(f.calls[2][1])[0], 'current');
+  assert.equal(f.calls[2][0].length, 200);
+  f.setList([]); f.state.playMusicInfo.musicInfo = null; f.state.tempPlayList = [];
+  f.api.syncSystemQueue(); await flush(); assert.equal(f.calls[3][0].length, 0); assert.equal(f.calls[3][1], '');
+  f.api.initializeSystemQueue(); f.api.initializeSystemQueue();
+  assert.ok(f.events.myListMusicUpdate && f.events.playTempPlayListChanged && f.events.playMusicInfoChanged);
+  const restart = fixture();
+  restart.api.syncSystemQueue(); await flush();
+  restart.api.syncSystemQueue(true); await flush();
+  assert.equal(restart.calls.length, 2, 'force republishes identical queue after native service restart');
+  console.log('PASS: queue metadata, active ID, dedup, 10k list bound, temp queue bound, stale IDs, temporary current, empty queue, listeners.');
+})().catch(error => { console.error(error); process.exitCode = 1 });
