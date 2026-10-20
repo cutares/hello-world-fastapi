@@ -8,8 +8,8 @@ h = (r / 'java/com/guichaguri/trackplayer/service/HeadlessJsTaskService.java').r
 m = (r / 'java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java').read_text()
 b = (r / 'java/com/guichaguri/trackplayer/service/MusicBinder.java').read_text()
 e = (r / 'java/com/guichaguri/trackplayer/service/metadata/ButtonEvents.java').read_text()
-def method(text, name):
-    hit = re.search(r'\b' + name + r'\([^)]*\)\s*\{', text)
+def method(text, name, params=r'[^)]*'):
+    hit = re.search(r'\b' + name + r'\(' + params + r'\)\s*\{', text)
     assert hit, name
     start = hit.end(); depth = 1
     for i in range(start, len(text)):
@@ -34,7 +34,7 @@ assert 'if (!ownsPackage) return false' in method(s, 'isTrustedBrowser')
 assert 'isTrustedForMediaControl' in method(s, 'isTrustedBrowser')
 assert 'if (!trusted) return null' in method(s, 'onGetRoot')
 assert 'BROWSER_ROOT.equals(parentId)' in method(s, 'onLoadChildren')
-assert 'FLAG_PLAYABLE' in method(s, 'getBrowserItems')
+assert 'FLAG_PLAYABLE' in method(s, 'getBrowserItems', 'boolean currentFirst')
 assert 'notifyChildrenChanged(BROWSER_ROOT)' in method(s, 'onSystemQueueChanged')
 assert 'service.onSystemQueueChanged()' in method(m, 'setSystemQueue')
 assert 'queue.size() >= 200' in m and 'mediaId.length() > 512' in m
