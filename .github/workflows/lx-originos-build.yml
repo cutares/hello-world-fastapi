@@ -62,9 +62,13 @@ jobs:
         run: |
           node lx-build/tests/system-queue.test.cjs
           node lx-build/tests/system-selection.test.cjs
+          node lx-build/tests/no-app-updates.test.cjs
+          node lx-build/tests/system-diagnostics.test.cjs
           python3 lx-build/tests/browser-source-check.py
+          python3 lx-build/tests/diagnostics-source-check.py
+          python3 lx-build/tests/vivo-protocol-source-check.py
           cd source
-          npx --no-install eslint src/plugins/player/systemQueue.ts src/plugins/player/index.ts src/plugins/player/service.ts src/plugins/player/utils.ts src/core/player/player.ts
+          npx --no-install eslint src/plugins/player/systemQueue.ts src/plugins/player/index.ts src/plugins/player/service.ts src/plugins/player/utils.ts src/core/player/player.ts src/plugins/player/systemQueueDiagnostics.ts src/screens/Home/Views/Setting/settings/Version.tsx
       - name: Ensure Android SDK packages
         run: bash lx-build/scripts/prepare-sdk.sh
       - name: Build ARM64 release with public temporary test signer

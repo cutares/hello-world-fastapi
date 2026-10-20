@@ -1,23 +1,63 @@
 diff --git a/android/src/main/AndroidManifest.xml b/android/src/main/AndroidManifest.xml
-index ad8c9ab..89c2d99 100644
+index ad8c9ab..c4c7bf6 100644
 --- a/android/src/main/AndroidManifest.xml
 +++ b/android/src/main/AndroidManifest.xml
-@@ -11,6 +11,7 @@
+@@ -6,11 +6,18 @@
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+ 
+     <application>
++        <!-- Public compatibility marker observed in shipping vivo Music Mix clients.
++             No third-party authorization token is used. -->
++        <meta-data android:name="support_vivo_musicwidgetmix_value" android:value="1001" />
+ 
+         <!-- The main service, handles playback, playlists and media buttons -->
          <service android:name=".service.MusicService" android:enabled="true" android:exported="true">
              <intent-filter>
                  <action android:name="android.intent.action.MEDIA_BUTTON" />
 +                <action android:name="android.media.browse.MediaBrowserService" />
++            </intent-filter>
++            <intent-filter>
++                <action android:name="com.vivo.musicwidgetmix.support.service" />
              </intent-filter>
          </service>
  
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/module/MusicModule.java b/android/src/main/java/com/guichaguri/trackplayer/module/MusicModule.java
-index 020d049..8cf68d7 100644
+index 020d049..5339259 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/module/MusicModule.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/module/MusicModule.java
-@@ -302,6 +302,28 @@ public class MusicModule extends ReactContextBaseJavaModule implements ServiceCo
+@@ -20,6 +20,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule;
+ import com.facebook.react.bridge.ReactMethod;
+ import com.facebook.react.bridge.ReadableArray;
+ import com.facebook.react.bridge.ReadableMap;
++import com.facebook.react.bridge.UiThreadUtil;
+ import androidx.media3.common.C;
+ import androidx.media3.common.Player;
+ import androidx.media3.common.util.UnstableApi;
+@@ -302,6 +303,49 @@ public class MusicModule extends ReactContextBaseJavaModule implements ServiceCo
          });
      }
  
++    /** Read only: do not connect or create playback just to inspect diagnostics. */
++    @ReactMethod
++    public void getSystemQueueDiagnostics(final Promise callback) {
++        UiThreadUtil.runOnUiThread(() -> {
++            try {
++                Bundle result;
++                if (binder == null) {
++                    result = new Bundle();
++                    result.putBoolean("serviceAvailable", false);
++                    result.putBoolean("bridgeAvailable", true);
++                } else {
++                    result = binder.getSystemQueueDiagnostics();
++                }
++                callback.resolve(Arguments.fromBundle(result));
++            } catch (RuntimeException error) {
++                // Never expose exception messages that could contain media metadata.
++                callback.reject("diagnostic_failed", "Unable to read local queue diagnostics");
++            }
++        });
++    }
++
 +    @ReactMethod
 +    public void setSystemQueue(ReadableArray entries, String activeMediaId, final Promise callback) {
 +        final List<Bundle> queue = new ArrayList<>();
@@ -74,7 +114,7 @@ index 8282e5b..3d7df35 100644
  
    /**
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java b/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java
-index f41035a..6660ba5 100644
+index f41035a..f42962c 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java
 @@ -1,6 +1,7 @@
@@ -85,10 +125,14 @@ index f41035a..6660ba5 100644
  import android.os.Bundle;
  import android.support.v4.media.session.MediaSessionCompat;
  
-@@ -60,6 +61,10 @@ public class MusicBinder extends Binder {
+@@ -60,6 +61,14 @@ public class MusicBinder extends Binder {
          metadata.setActive(true);
      }
  
++    public Bundle getSystemQueueDiagnostics() {
++        return service.getSystemQueueDiagnostics();
++    }
++
 +    public void setSystemQueue(List<Bundle> entries, String activeMediaId) {
 +        manager.getMetadata().setSystemQueue(entries, activeMediaId);
 +    }
@@ -96,7 +140,7 @@ index f41035a..6660ba5 100644
      public void clearNowPlayingMetadata() {
          manager.getMetadata().setActive(false);
      }
-@@ -77,7 +82,7 @@ public class MusicBinder extends Binder {
+@@ -77,7 +86,7 @@ public class MusicBinder extends Binder {
      }
  
      public void destroy() {
@@ -106,10 +150,10 @@ index f41035a..6660ba5 100644
      }
  
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/MusicService.java b/android/src/main/java/com/guichaguri/trackplayer/service/MusicService.java
-index 505f244..b41f821 100644
+index 505f244..d5b4173 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/service/MusicService.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/service/MusicService.java
-@@ -4,6 +4,15 @@ import android.content.Intent;
+@@ -4,6 +4,18 @@ import android.content.Intent;
  import android.os.Bundle;
  import android.os.Handler;
  import android.os.IBinder;
@@ -121,27 +165,64 @@ index 505f244..b41f821 100644
 +import androidx.annotation.NonNull;
 +import androidx.media.MediaSessionManager;
 +import java.util.ArrayList;
++import java.util.ArrayDeque;
 +import java.util.List;
++import java.util.LinkedHashSet;
++import java.util.Set;
  
  import androidx.core.app.NotificationCompat;
  import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-@@ -23,8 +32,15 @@ import javax.annotation.Nullable;
+@@ -23,8 +35,49 @@ import javax.annotation.Nullable;
  @UnstableApi
  public class MusicService extends HeadlessJsTaskService {
  
 +    public static final String BROWSER_ROOT = "lx.current.queue";
++    public static final String VIVO_BROWSER_ROOT = "VIVO_MUSIC_MIX_ROOT";
++    public static final String VIVO_CURRENT_LIST = "vivomusicmix_current_list";
++    private static final String VIVO_DISCOVERY_ACTION = "com.vivo.musicwidgetmix.support.service";
++    private final Set<String> vivoSubscribedParents = new LinkedHashSet<>();
 +
      MusicManager manager;
      Handler handler;
 +    private int diagnosticCount;
++    private final ArrayDeque<String> diagnosticEvents = new ArrayDeque<>();
++    private int browserBindCalls, browserRootCalls, browserAccepted, browserRejected, browserChildrenCalls;
++    private int lastChildrenCount;
++    private String lastBrowserPackage = "";
++    private int lastBrowserUid = -1;
 +
 +    public void logSystemQueue(String message) {
-+        if (diagnosticCount++ < 100) Log.d("LXSystemQueue", message);
++        // Call sites supply only fixed event text, counts, booleans and client identity.
++        String safe = message.replace('\n', ' ').replace('\r', ' ');
++        if (safe.length() > 256) safe = safe.substring(0, 256);
++        if (diagnosticEvents.size() >= 24) diagnosticEvents.removeFirst();
++        diagnosticEvents.addLast(safe);
++        if (diagnosticCount++ < 100) Log.d("LXSystemQueue", safe);
++    }
++
++    public Bundle getSystemQueueDiagnostics() {
++        Bundle result = new Bundle();
++        result.putBoolean("bridgeAvailable", true);
++        result.putBoolean("serviceAvailable", manager != null);
++        if (manager == null) return result;
++        result.putAll(manager.getMetadata().getSystemQueueDiagnostics());
++        result.putBoolean("playbackPresent", manager.getPlayback() != null);
++        result.putInt("playbackState", manager.getPlayback() == null ? -1 : manager.getPlayback().getState());
++        result.putInt("browserBindCalls", browserBindCalls);
++        result.putInt("browserRootCalls", browserRootCalls);
++        result.putInt("browserAccepted", browserAccepted);
++        result.putInt("browserRejected", browserRejected);
++        result.putInt("browserChildrenCalls", browserChildrenCalls);
++        result.putInt("lastChildrenCount", lastChildrenCount);
++        result.putString("lastBrowserPackage", lastBrowserPackage);
++        result.putInt("lastBrowserUid", lastBrowserUid);
++        result.putStringArrayList("events", new ArrayList<>(diagnosticEvents));
++        return result;
 +    }
  
      @Nullable
      @Override
-@@ -46,9 +62,19 @@ public class MusicService extends HeadlessJsTaskService {
+@@ -46,9 +99,19 @@ public class MusicService extends HeadlessJsTaskService {
          LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
      }
  
@@ -163,7 +244,7 @@ index 505f244..b41f821 100644
              handler = null;
          }
  
-@@ -85,8 +111,9 @@ public class MusicService extends HeadlessJsTaskService {
+@@ -85,10 +148,22 @@ public class MusicService extends HeadlessJsTaskService {
      @Nullable
      @Override
      public IBinder onBind(Intent intent) {
@@ -174,8 +255,21 @@ index 505f244..b41f821 100644
 +            return manager == null ? null : new MusicBinder(this, manager);
          }
  
++        browserBindCalls++;
++        if (intent != null && VIVO_DISCOVERY_ACTION.equals(intent.getAction())) {
++            // Discovery action seen in shipping music apps. Still use the standard
++            // browser Binder and enforce the same package/UID trust in onGetRoot.
++            logSystemQueue("bind vivo browser");
++            Intent browserIntent = new Intent(intent);
++            browserIntent.setAction("android.media.browse.MediaBrowserService");
++            return super.onBind(browserIntent);
++        }
++        logSystemQueue(intent != null && "android.media.browse.MediaBrowserService".equals(intent.getAction())
++                ? "bind standard browser" : "bind other action");
          return super.onBind(intent);
-@@ -105,9 +132,12 @@ public class MusicService extends HeadlessJsTaskService {
+     }
+ 
+@@ -105,9 +180,12 @@ public class MusicService extends HeadlessJsTaskService {
              return START_NOT_STICKY;
          }
  
@@ -191,7 +285,7 @@ index 505f244..b41f821 100644
          super.onStartCommand(intent, flags, startId);
          return START_NOT_STICKY;
      }
-@@ -115,15 +145,74 @@ public class MusicService extends HeadlessJsTaskService {
+@@ -115,15 +193,95 @@ public class MusicService extends HeadlessJsTaskService {
      @Override
      public void onCreate() {
          super.onCreate();
@@ -206,11 +300,15 @@ index 505f244..b41f821 100644
 +    @Nullable
 +    @Override
 +    public BrowserRoot onGetRoot(@NonNull String clientPackageName, int clientUid, @Nullable Bundle rootHints) {
++        browserRootCalls++;
 +        boolean trusted = isTrustedBrowser(clientPackageName, clientUid);
++        if (trusted) browserAccepted++; else browserRejected++;
++        lastBrowserPackage = clientPackageName.length() > 128 ? clientPackageName.substring(0, 128) : clientPackageName;
++        lastBrowserUid = clientUid;
 +        String packageLabel = clientPackageName.length() > 128 ? clientPackageName.substring(0, 128) : clientPackageName;
 +        logSystemQueue("browse root package=" + packageLabel + " uid=" + clientUid + " accepted=" + trusted);
 +        if (!trusted) return null;
-+        return new BrowserRoot(BROWSER_ROOT, null);
++        return new BrowserRoot("com.vivo.musicwidgetmix".equals(clientPackageName) ? VIVO_BROWSER_ROOT : BROWSER_ROOT, null);
 +    }
 +
 +    private boolean isTrustedBrowser(String packageName, int uid) {
@@ -233,9 +331,15 @@ index 505f244..b41f821 100644
 +    }
 +
 +    private List<MediaBrowserCompat.MediaItem> getBrowserItems() {
++        return getBrowserItems(false);
++    }
++
++    private List<MediaBrowserCompat.MediaItem> getBrowserItems(boolean currentFirst) {
 +        List<MediaBrowserCompat.MediaItem> items = new ArrayList<>();
 +        if (manager == null) return items;
-+        for (MediaSessionCompat.QueueItem item : manager.getMetadata().getSystemQueue()) {
++        List<MediaSessionCompat.QueueItem> queue = currentFirst
++                ? manager.getMetadata().getSystemQueueFromCurrent() : manager.getMetadata().getSystemQueue();
++        for (MediaSessionCompat.QueueItem item : queue) {
 +            items.add(new MediaBrowserCompat.MediaItem(item.getDescription(), MediaBrowserCompat.MediaItem.FLAG_PLAYABLE));
 +        }
 +        return items;
@@ -243,8 +347,13 @@ index 505f244..b41f821 100644
 +
 +    @Override
 +    public void onLoadChildren(@NonNull String parentId, @NonNull Result<List<MediaBrowserCompat.MediaItem>> result) {
-+        List<MediaBrowserCompat.MediaItem> items = BROWSER_ROOT.equals(parentId) ? getBrowserItems() : new ArrayList<>();
-+        logSystemQueue("browse children count=" + items.size());
++        boolean vivoList = parentId.length() <= 256 && parentId.contains(VIVO_CURRENT_LIST);
++        boolean knownRoot = BROWSER_ROOT.equals(parentId) || VIVO_BROWSER_ROOT.equals(parentId) || vivoList;
++        if (vivoList && vivoSubscribedParents.size() < 16) vivoSubscribedParents.add(parentId);
++        List<MediaBrowserCompat.MediaItem> items = knownRoot ? getBrowserItems(vivoList) : new ArrayList<>();
++        browserChildrenCalls++;
++        lastChildrenCount = items.size();
++        logSystemQueue("browse children count=" + items.size() + " knownRoot=" + knownRoot + " vivoList=" + vivoList);
 +        result.sendResult(items);
 +    }
 +
@@ -258,6 +367,12 @@ index 505f244..b41f821 100644
 +
 +    public void onSystemQueueChanged() {
 +        notifyChildrenChanged(BROWSER_ROOT);
++        notifyChildrenChanged(VIVO_BROWSER_ROOT);
++        notifyChildrenChanged(VIVO_CURRENT_LIST);
++        // Vivo requests may append a suffix; notify exactly the bounded observed nodes.
++        for (String parent : vivoSubscribedParents) {
++            if (!VIVO_CURRENT_LIST.equals(parent)) notifyChildrenChanged(parent);
++        }
      }
  
      @Override
@@ -269,7 +384,7 @@ index 505f244..b41f821 100644
          stopForeground(true);
      }
  
-@@ -135,7 +224,7 @@ public class MusicService extends HeadlessJsTaskService {
+@@ -135,7 +293,7 @@ public class MusicService extends HeadlessJsTaskService {
              if (manager != null && manager.getPlayback() != null) {
                  manager.getPlayback().stop();
              }
@@ -326,7 +441,7 @@ index 7f3773b..05ab66c 100644
  
      @Override
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java b/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
-index e185728..695021d 100644
+index e185728..bf9724f 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
 @@ -17,6 +17,7 @@ import android.net.Uri;
@@ -346,7 +461,16 @@ index e185728..695021d 100644
  
  /**
   * @author Guichaguri
-@@ -55,6 +58,68 @@ public class MetadataManager {
+@@ -51,10 +54,114 @@ import java.util.List;
+ @UnstableApi
+ public class MetadataManager {
+ 
++    private static final String VIVO_SUPPORT_EVENT = "vivomusicmix.media.metadata.support_event";
++    // Verified shipping protocol: control 1, info 2, image 4, seek 16,
++    // current-list 256, play-index 2048. Do NOT advertise lyrics/favorite/loop.
++    private static final long VIVO_BASIC_SUPPORT = 1L | 2L | 4L | 16L;
++    private static final long VIVO_QUEUE_SUPPORT = 256L | 2048L;
+     private final MusicService service;
      private final MusicManager manager;
      private final MediaSessionCompat session;
  
@@ -354,6 +478,7 @@ index e185728..695021d 100644
 +    private List<MediaSessionCompat.QueueItem> systemQueue = new ArrayList<>();
 +    private final Map<Long, String> systemQueueIds = new HashMap<>();
 +    private long nextSystemQueueId = 1;
++    private int nativeQueueUpdates;
 +    private long activeSystemQueueId = MediaSessionCompat.QueueItem.UNKNOWN_ID;
 +
 +    public void setSystemQueue(List<Bundle> entries, String activeMediaId) {
@@ -383,6 +508,9 @@ index e185728..695021d 100644
 +        systemQueue = queue;
 +        session.setQueueTitle("LX Music");
 +        session.setQueue(queue);
++        nativeQueueUpdates++;
++        service.logSystemQueue("queue published count=" + queue.size() + " active=" + systemQueueIds.containsKey(activeSystemQueueId));
++        if (prevMetadata != null) publishMetadata(prevMetadata);
 +        service.onSystemQueueChanged();
 +        if (manager.getPlayback() != null) {
 +            updatePlaybackState(manager.getPlayback());
@@ -400,6 +528,39 @@ index e185728..695021d 100644
 +        return text.length() > 128 ? text.substring(0, 128) : text;
 +    }
 +
++    /** Aggregate diagnostics only; never return descriptions, IDs or stream URLs. */
++    public Bundle getSystemQueueDiagnostics() {
++        Bundle result = new Bundle();
++        result.putInt("queueCount", systemQueue.size());
++        result.putBoolean("activeItemPresent", systemQueueIds.containsKey(activeSystemQueueId));
++        result.putBoolean("sessionActive", session.isActive());
++        PlaybackStateCompat state = session.getController().getPlaybackState();
++        long actualActions = state == null ? 0 : state.getActions();
++        result.putBoolean("actionSkipToQueue", (actualActions & PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM) != 0);
++        result.putBoolean("actionPlayFromId", (actualActions & PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID) != 0);
++        MediaMetadataCompat metadata = session.getController().getMetadata();
++        result.putBoolean("metadataMediaIdPresent", metadata != null && metadata.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID) != null);
++        result.putInt("nativeQueueUpdates", nativeQueueUpdates);
++        result.putLong("vivoSupportMask", metadata == null ? 0L : metadata.getLong(VIVO_SUPPORT_EVENT));
++        return result;
++    }
++
++    private void publishMetadata(MediaMetadataCompat.Builder metadata) {
++        long support = VIVO_BASIC_SUPPORT | (systemQueue.isEmpty() ? 0L : VIVO_QUEUE_SUPPORT);
++        metadata.putLong(VIVO_SUPPORT_EVENT, support);
++        metadata.putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, systemQueueIds.get(activeSystemQueueId));
++        session.setMetadata(metadata.build());
++    }
++
++    /** The vivo current-list contract starts with the currently playing item. */
++    public List<MediaSessionCompat.QueueItem> getSystemQueueFromCurrent() {
++        int start = 0;
++        for (int i = 0; i < systemQueue.size(); i++) {
++            if (systemQueue.get(i).getQueueId() == activeSystemQueueId) { start = i; break; }
++        }
++        return new ArrayList<>(systemQueue.subList(start, systemQueue.size()));
++    }
++
 +    public List<MediaSessionCompat.QueueItem> getSystemQueue() {
 +        return new ArrayList<>(systemQueue);
 +    }
@@ -415,7 +576,52 @@ index e185728..695021d 100644
      private int ratingType = RatingCompat.RATING_NONE;
      private int forwardJumpInterval = 15;
      private int backwardJumpInterval = 15;
-@@ -354,6 +419,7 @@ public class MetadataManager {
+@@ -204,7 +311,7 @@ public class MetadataManager {
+         metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bitmap);
+         builder.setLargeIcon(bitmap);
+ 
+-        session.setMetadata(metadata.build());
++        publishMetadata(metadata);
+         updateNotification();
+     }
+ 
+@@ -222,7 +329,7 @@ public class MetadataManager {
+       if (data.containsKey("lyric")) {
+         prevMetadata.putString("android.media.metadata.LYRICS", data.getString("lyric"));
+       }
+-      session.setMetadata(prevMetadata.build());
++      publishMetadata(prevMetadata);
+       updatePlaybackState(manager.getPlayback());
+     }
+ 
+@@ -260,7 +367,7 @@ public class MetadataManager {
+                         metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, resource);
+                         builder.setLargeIcon(resource);
+ 
+-                        session.setMetadata(metadata.build());
++                        publishMetadata(metadata);
+                         updateNotification();
+                         artworkTarget = null;
+                     }
+@@ -274,7 +381,7 @@ public class MetadataManager {
+         builder.setContentText(track.artist);
+         builder.setSubText(track.album);
+ 
+-        session.setMetadata(metadata.build());
++        publishMetadata(metadata);
+ 
+         updatePlayback(isPlaying);
+         updatePlaybackState(playback);
+@@ -340,7 +447,7 @@ public class MetadataManager {
+ 
+     @SuppressLint("RestrictedApi")
+     public void updatePlayback(ExoPlayback playback, boolean playing) {
+-        if (prevMetadata != null) session.setMetadata(prevMetadata.build());
++        if (prevMetadata != null) publishMetadata(prevMetadata);
+         updatePlayback(playing);
+         updatePlaybackState(playback);
+         updateNotification();
+@@ -354,6 +461,7 @@ public class MetadataManager {
          // Updates the media session state
          PlaybackStateCompat.Builder pb = new PlaybackStateCompat.Builder();
          pb.setActions(actions);

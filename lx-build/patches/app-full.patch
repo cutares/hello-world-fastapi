@@ -58,7 +58,7 @@ index f203997..814b76b 100644
          android:grantUriPermissions="true">
          <!-- you might need the tools:replace thing to workaround rn-fetch-blob or other definitions of provider -->
 diff --git a/package.json b/package.json
-index bd9d2ce..733e64f 100644
+index bd9d2ce..d7f468d 100644
 --- a/package.json
 +++ b/package.json
 @@ -1,7 +1,7 @@
@@ -66,8 +66,8 @@ index bd9d2ce..733e64f 100644
    "name": "lx-music-mobile",
 -  "version": "1.9.1",
 -  "versionCode": 78,
-+  "version": "1.9.1-originos-queue1",
-+  "versionCode": 79,
++  "version": "1.9.1-originos-queue2",
++  "versionCode": 80,
    "private": true,
    "scripts": {
      "dev": "react-native run-android --active-arch-only",
@@ -84,6 +84,26 @@ index b70b252..eebfeab 100644
  
  
  export const NAV_MENUS = [
+diff --git a/src/core/init/index.ts b/src/core/init/index.ts
+index f2801e8..8168400 100644
+--- a/src/core/init/index.ts
++++ b/src/core/init/index.ts
+@@ -11,7 +11,6 @@ import { initDeeplink } from './deeplink'
+ import { setApiSource } from '@/core/apiSource'
+ import commonActions from '@/store/common/action'
+ import settingState from '@/store/setting/state'
+-import { checkUpdate } from '@/core/version'
+ import { bootLog } from '@/utils/bootLog'
+ import { cheatTip } from '@/utils/tools'
+ 
+@@ -21,7 +20,6 @@ const handlePushedHomeScreen = async() => {
+   if (settingState.setting['common.isAgreePact']) {
+     if (isFirstPush) {
+       isFirstPush = false
+-      void checkUpdate()
+       void initDeeplink()
+     }
+   } else {
 diff --git a/src/core/player/player.ts b/src/core/player/player.ts
 index 1fd9049..54c6d6c 100644
 --- a/src/core/player/player.ts
@@ -124,6 +144,503 @@ index 1fd9049..54c6d6c 100644
 +  }
 +  await handlePlay()
 +}
+diff --git a/src/core/version.ts b/src/core/version.ts
+deleted file mode 100644
+index 0c92fbf..0000000
+--- a/src/core/version.ts
++++ /dev/null
+@@ -1,90 +0,0 @@
+-import { compareVer } from '@/utils'
+-import { downloadNewVersion, getVersionInfo } from '@/utils/version'
+-import versionActions from '@/store/version/action'
+-import versionState, { type InitState } from '@/store/version/state'
+-import { getIgnoreVersion, getIgnoreVersionFailTipTime, saveIgnoreVersion, saveIgnoreVersionFailTipTime } from '@/utils/data'
+-import { showVersionModal } from '@/navigation'
+-import { Navigation } from 'react-native-navigation'
+-import { toast } from '@/utils/tools'
+-
+-export const showModal = () => {
+-  if (versionState.showModal) return
+-  versionActions.setVisibleModal(true)
+-  showVersionModal()
+-}
+-
+-export const hideModal = (componentId: string) => {
+-  if (!versionState.showModal) return
+-  versionActions.setVisibleModal(false)
+-  void Navigation.dismissOverlay(componentId)
+-}
+-
+-export const checkUpdate = async() => {
+-  versionActions.setVersionInfo({ status: 'checking' })
+-  let versionInfo: InitState['versionInfo'] = { ...versionState.versionInfo }
+-  try {
+-    const { version, desc, history } = await getVersionInfo()
+-    versionInfo.newVersion = {
+-      version,
+-      desc,
+-      history,
+-    }
+-  } catch (err) {
+-    versionInfo.newVersion = {
+-      version: '0.0.0',
+-      desc: '',
+-      history: [],
+-    }
+-  }
+-  // const versionInfo = {
+-  //   version: '1.9.0',
+-  //   desc: '- 更新xxx\n- 修复xxx123的萨达修复xxx123的萨达修复xxx123的萨达修复xxx123的萨达修复xxx123的萨达',
+-  //   history: [{ version: '1.8.0', desc: '- 更新xxx22\n- 修复xxx22' }, { version: '1.7.0', desc: '- 更新xxx22\n- 修复xxx22' }],
+-  // }
+-  if (versionInfo.newVersion.version == '0.0.0') {
+-    versionInfo.isUnknown = true
+-    versionInfo.status = 'error'
+-  } else {
+-    versionInfo.status = 'idle'
+-    versionInfo.isUnknown = false
+-    if (compareVer(versionInfo.version, versionInfo.newVersion.version) != -1) {
+-      versionInfo.isLatest = true
+-    }
+-  }
+-
+-  versionActions.setVersionInfo(versionInfo)
+-
+-  if (!versionInfo.isLatest) {
+-    if (versionInfo.isUnknown) {
+-      const time = await getIgnoreVersionFailTipTime()
+-      if (Date.now() - time < 7 * 86400000) return
+-      saveIgnoreVersionFailTipTime(Date.now())
+-      toast(global.i18n.t('version_tip_unknown'))
+-    } else if (versionInfo.newVersion.version != await getIgnoreVersion()) {
+-      showModal()
+-    }
+-  }
+-  // console.log(compareVer(process.versions.app, versionInfo.version))
+-  // console.log(process.versions.app, versionInfo.version)
+-}
+-
+-export const downloadUpdate = () => {
+-  versionActions.setVersionInfo({ status: 'downloading' })
+-  versionActions.setProgress({ total: 0, current: 0 })
+-
+-  downloadNewVersion(versionState.versionInfo.newVersion!.version, (total: number, current: number) => {
+-    // console.log(total, current)
+-    versionActions.setProgress({ total, current })
+-  }).then(() => {
+-    versionActions.setVersionInfo({ status: 'downloaded' })
+-  }).catch(() => {
+-    versionActions.setVersionInfo({ status: 'error' })
+-    // console.log(err)
+-  })
+-}
+-
+-
+-export const setIgnoreVersion = (version: InitState['ignoreVersion']) => {
+-  versionActions.setIgnoreVersion(version)
+-  saveIgnoreVersion(version)
+-}
+diff --git a/src/navigation/components/PactModal.tsx b/src/navigation/components/PactModal.tsx
+index db67e1e..c141043 100644
+--- a/src/navigation/components/PactModal.tsx
++++ b/src/navigation/components/PactModal.tsx
+@@ -10,7 +10,6 @@ import Text from '@/components/common/Text'
+ import ModalContent from './ModalContent'
+ import { exitApp } from '@/utils/nativeModules/utils'
+ import { updateSetting } from '@/core/common'
+-import { checkUpdate } from '@/core/version'
+ import { initDeeplink } from '@/core/init/deeplink'
+ import settingState from '@/store/setting/state'
+ 
+@@ -68,7 +67,6 @@ const Content = () => {
+ const Footer = ({ componentId }: { componentId: string }) => {
+   const theme = useTheme()
+   const isAgreePact = useSettingValue('common.isAgreePact')
+-  // const checkUpdate = useDispatch('common', 'checkUpdate')
+   const [time, setTime] = useState(20)
+ 
+   const handleRejct = () => {
+@@ -88,7 +86,6 @@ const Footer = ({ componentId }: { componentId: string }) => {
+           [{
+             text: Buffer.from('e5a5bde79a8420284f4b29', 'hex').toString(),
+             onPress: () => {
+-              void checkUpdate()
+               void initDeeplink()
+             },
+           }],
+diff --git a/src/navigation/components/VersionModal.tsx b/src/navigation/components/VersionModal.tsx
+deleted file mode 100644
+index f46de0f..0000000
+--- a/src/navigation/components/VersionModal.tsx
++++ /dev/null
+@@ -1,263 +0,0 @@
+-import { useMemo, useState, useEffect, memo } from 'react'
+-import { View, ScrollView } from 'react-native'
+-
+-import { compareVer, sizeFormate } from '@/utils'
+-
+-import Button from '@/components/common/Button'
+-import { updateApp } from '@/utils/version'
+-import { createStyle } from '@/utils/tools'
+-import { useTheme } from '@/store/theme/hook'
+-import { type VersionInfo } from '@/store/version/state'
+-import Text from '@/components/common/Text'
+-import { useI18n } from '@/lang'
+-import { useVersionDownloadProgressUpdated, useVersionInfo, useVersionInfoIgnoreVersionUpdated } from '@/store/version/hook'
+-import ModalContent from './ModalContent'
+-import { checkUpdate, downloadUpdate, hideModal, setIgnoreVersion } from '@/core/version'
+-
+-const VersionItem = ({ version, desc }: VersionInfo) => {
+-  return (
+-    <View style={styles.versionItem}>
+-      <Text style={styles.label}>v{version}</Text>
+-      <Text selectable style={styles.desc}>{desc}</Text>
+-    </View>
+-  )
+-}
+-
+-const Content = memo(({ title, newVersionInfo }: {
+-  title: string
+-  newVersionInfo: VersionInfo | null
+-}) => {
+-  const t = useI18n()
+-
+-  const history = useMemo(() => {
+-    if (!newVersionInfo?.history) return []
+-    let arr = []
+-    for (const ver of newVersionInfo?.history) {
+-      if (compareVer(currentVer, ver.version) < 0) arr.push(ver)
+-    }
+-    return arr
+-  }, [newVersionInfo])
+-
+-  return (
+-    <View style={styles.main}>
+-      <Text style={styles.title}>{title}</Text>
+-      <ScrollView style={styles.content} keyboardShouldPersistTaps={'always'}>
+-        <Text style={styles.label}>{t('version_label_latest_ver')}{newVersionInfo?.version}</Text>
+-        <Text style={styles.label}>{t('version_label_current_ver')}{currentVer}</Text>
+-        {
+-          newVersionInfo?.desc
+-            ? (
+-                <View>
+-                  <Text style={styles.label}>{t('version_label_change_log')}</Text>
+-                  <View style={{ paddingLeft: 10, marginTop: 5 }}>
+-                    <Text selectable style={styles.desc}>{newVersionInfo.desc}</Text>
+-                  </View>
+-                </View>
+-              )
+-            : null
+-        }
+-        {
+-          history.length
+-            ? (
+-                <View style={styles.history}>
+-                  <Text style={styles.label}>{t('version_label_history')}</Text>
+-                  <View style={{ paddingLeft: 10, marginTop: 5 }}>
+-                    {history.map((item, index) => <VersionItem key={index} version={item.version} desc={item.desc} />)}
+-                  </View>
+-                </View>
+-              )
+-            : null
+-        }
+-      </ScrollView>
+-    </View>
+-  )
+-})
+-
+-const currentVer = process.versions.app
+-const VersionModal = ({ componentId }: { componentId: string }) => {
+-  const theme = useTheme()
+-  const t = useI18n()
+-  const versionInfo = useVersionInfo()
+-  const progress = useVersionDownloadProgressUpdated()
+-  const ignoreVersion = useVersionInfoIgnoreVersionUpdated()
+-  const [ignoreBtn, setIgnoreBtn] = useState({ text: t('version_btn_ignore'), show: true, disabled: false })
+-  const [closeBtnText, setCloseBtnText] = useState(t('version_btn_close'))
+-  const [confirmBtn, setConfirmBtn] = useState({ text: '', show: true, disabled: false })
+-  const [title, setTitle] = useState('')
+-  const [tip, setTip] = useState('')
+-
+-
+-  useEffect(() => {
+-    let ignoreBtnConfig = { ...ignoreBtn }
+-    if (versionInfo.isLatest) {
+-      setTitle(t('version_title_latest'))
+-      setTip('')
+-      ignoreBtnConfig.show = false
+-      setConfirmBtn({ text: t('version_btn_new'), show: false, disabled: true })
+-      setCloseBtnText(t('version_btn_close'))
+-    } else if (versionInfo.isUnknown) {
+-      setTitle(t('version_title_unknown'))
+-      setTip(t('version_tip_unknown'))
+-      ignoreBtnConfig.show = false
+-      setConfirmBtn({ text: t('version_btn_failed'), show: true, disabled: false })
+-      setCloseBtnText(t('version_btn_close'))
+-    } else {
+-      switch (versionInfo.status) {
+-        case 'downloading':
+-          setTitle(t('version_title_new'))
+-          setTip(t('version_btn_downloading', {
+-            total: sizeFormate(progress.total),
+-            current: sizeFormate(progress.current),
+-            progress: progress.total ? (progress.current / progress.total * 100).toFixed(2) : '0',
+-          }))
+-          if (ignoreBtnConfig.show) ignoreBtnConfig.show = false
+-          if (!confirmBtn.disabled) setConfirmBtn({ text: t('version_btn_update'), show: true, disabled: true })
+-          setCloseBtnText(t('version_btn_min'))
+-          break
+-        case 'downloaded':
+-          setTitle(t('version_title_update'))
+-          setTip('')
+-          if (ignoreBtnConfig.show) ignoreBtnConfig.show = false
+-          setConfirmBtn({ text: t('version_btn_update'), show: true, disabled: false })
+-          setCloseBtnText(t('version_btn_close'))
+-          break
+-        case 'checking':
+-          setTitle(t('version_title_checking'))
+-          setTip('')
+-          ignoreBtnConfig.show = false
+-          setConfirmBtn({ text: t('version_btn_new'), show: false, disabled: true })
+-          setCloseBtnText(t('version_btn_close'))
+-          break
+-        case 'error':
+-          setTitle(t('version_title_failed'))
+-          setTip(t('version_tip_failed'))
+-          ignoreBtnConfig.show = true
+-          ignoreBtnConfig.disabled = false
+-          setConfirmBtn({ text: t('version_btn_failed'), show: true, disabled: false })
+-          setCloseBtnText(t('version_btn_close'))
+-          break
+-        // case 'idle':
+-        //   break
+-        default:
+-          setTitle(t('version_title_new'))
+-          setTip('')
+-          ignoreBtnConfig.show = true
+-          ignoreBtnConfig.disabled = false
+-          setConfirmBtn({ text: t('version_btn_new'), show: true, disabled: false })
+-          // setTip(t('version_btn_new'))
+-          setCloseBtnText(t('version_btn_close'))
+-          break
+-      }
+-    }
+-    ignoreBtnConfig.text = t(ignoreVersion == versionInfo.newVersion?.version ? 'version_btn_ignore_cancel' : 'version_btn_ignore')
+-    setIgnoreBtn(ignoreBtnConfig)
+-
+-  // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [t, versionInfo, ignoreVersion, progress])
+-
+-  const handleCancel = () => {
+-    hideModal(componentId)
+-  }
+-  const handleIgnore = () => {
+-    setIgnoreVersion(ignoreVersion != versionInfo.newVersion!.version ? versionInfo.newVersion!.version : null)
+-    // handleCancel()
+-  }
+-
+-  const handleConfirm = () => {
+-    if (versionInfo.isLatest || versionInfo.isUnknown) {
+-      void checkUpdate()
+-    } else if (versionInfo.status == 'downloaded') {
+-      void updateApp()
+-    } else if (versionInfo.status == 'idle' || versionInfo.status == 'error') {
+-      downloadUpdate()
+-    }
+-  }
+-
+-  return (
+-    <ModalContent>
+-      <Content title={title} newVersionInfo={versionInfo.newVersion} />
+-      { tip.length ? <Text style={styles.tip} color={theme['c-primary-font']}>{tip}</Text> : null }
+-      <View style={styles.btns}>
+-        {
+-          ignoreBtn.show
+-            ? (
+-                <Button disabled={ignoreBtn.disabled} style={{ ...styles.btn, backgroundColor: theme['c-button-background'] }} onPress={handleIgnore}>
+-                  <Text color={theme['c-button-font']}>{ignoreBtn.text}</Text>
+-                </Button>
+-              )
+-            : null
+-        }
+-        <Button style={{ ...styles.btn, backgroundColor: theme['c-button-background'] }} onPress={handleCancel}>
+-          <Text color={theme['c-button-font']}>{closeBtnText}</Text>
+-        </Button>
+-        {
+-          confirmBtn.show
+-            ? (
+-                <Button disabled={confirmBtn.disabled} style={{ ...styles.btn, backgroundColor: theme['c-button-background'] }} onPress={handleConfirm}>
+-                  <Text color={theme['c-button-font']}>{confirmBtn.text}</Text>
+-                </Button>
+-              )
+-            : null
+-        }
+-      </View>
+-    </ModalContent>
+-  )
+-}
+-
+-const styles = createStyle({
+-  main: {
+-    // flexGrow: 0,
+-    flexShrink: 1,
+-    marginTop: 15,
+-    marginLeft: 15,
+-    marginRight: 15,
+-    marginBottom: 20,
+-  },
+-  content: {
+-    flexGrow: 0,
+-  },
+-  title: {
+-    fontSize: 18,
+-    textAlign: 'center',
+-    marginBottom: 15,
+-  },
+-  history: {
+-    marginTop: 15,
+-  },
+-  versionItem: {
+-    marginBottom: 10,
+-  },
+-  label: {
+-    fontSize: 14,
+-    marginBottom: 2,
+-  },
+-  desc: {
+-    fontSize: 13,
+-    lineHeight: 18,
+-  },
+-  tip: {
+-    paddingLeft: 15,
+-    paddingRight: 15,
+-    paddingBottom: 10,
+-  },
+-  btns: {
+-    flexDirection: 'row',
+-    justifyContent: 'center',
+-    paddingBottom: 15,
+-    paddingLeft: 15,
+-    // paddingRight: 15,
+-  },
+-  btn: {
+-    flex: 1,
+-    paddingTop: 10,
+-    paddingBottom: 10,
+-    paddingLeft: 10,
+-    paddingRight: 10,
+-    alignItems: 'center',
+-    borderRadius: 4,
+-    marginRight: 15,
+-  },
+-})
+-
+-export default VersionModal
+-
+diff --git a/src/navigation/registerScreens.tsx b/src/navigation/registerScreens.tsx
+index 06a40a4..39d4b84 100644
+--- a/src/navigation/registerScreens.tsx
++++ b/src/navigation/registerScreens.tsx
+@@ -16,12 +16,10 @@ import {
+   PLAY_DETAIL_SCREEN,
+   SONGLIST_DETAIL_SCREEN,
+   COMMENT_SCREEN,
+-  VERSION_MODAL,
+   PACT_MODAL,
+   SYNC_MODE_MODAL,
+   // SETTING_SCREEN,
+ } from './screenNames'
+-import VersionModal from './components/VersionModal'
+ import PactModal from './components/PactModal'
+ import SyncModeModal from './components/SyncModeModal'
+ 
+@@ -44,7 +42,6 @@ export default () => {
+   Navigation.registerComponent(PLAY_DETAIL_SCREEN, () => WrappedComponent(PlayDetail))
+   Navigation.registerComponent(SONGLIST_DETAIL_SCREEN, () => WrappedComponent(SonglistDetail))
+   Navigation.registerComponent(COMMENT_SCREEN, () => WrappedComponent(Comment))
+-  Navigation.registerComponent(VERSION_MODAL, () => WrappedComponent(VersionModal))
+   Navigation.registerComponent(PACT_MODAL, () => WrappedComponent(PactModal))
+   Navigation.registerComponent(SYNC_MODE_MODAL, () => WrappedComponent(SyncModeModal))
+   // Navigation.registerComponent(SETTING_SCREEN, () => WrappedComponent(Setting))
+diff --git a/src/navigation/screenNames.ts b/src/navigation/screenNames.ts
+index 9d7ad48..9c08efe 100644
+--- a/src/navigation/screenNames.ts
++++ b/src/navigation/screenNames.ts
+@@ -2,7 +2,6 @@ export const HOME_SCREEN = 'lxm.HomeScreen'
+ export const PLAY_DETAIL_SCREEN = 'lxm.PlayDetailScreen'
+ export const SONGLIST_DETAIL_SCREEN = 'lxm.SonglistDetailScreen'
+ export const COMMENT_SCREEN = 'lxm.CommentScreen'
+-export const VERSION_MODAL = 'lxm.VersionModal'
+ export const PACT_MODAL = 'lxm.PactModal'
+ export const SYNC_MODE_MODAL = 'lxm.SyncModeModal'
+ // export const SETTING_SCREEN = 'lxm.SettingScreen'
+diff --git a/src/navigation/utils.ts b/src/navigation/utils.ts
+index 72bcfbb..0bcc077 100644
+--- a/src/navigation/utils.ts
++++ b/src/navigation/utils.ts
+@@ -1,6 +1,5 @@
+ import { Navigation } from 'react-native-navigation'
+ import {
+-  VERSION_MODAL,
+   PACT_MODAL,
+   SYNC_MODE_MODAL,
+ } from './screenNames'
+@@ -64,55 +63,6 @@ export const showPactModal = () => {
+   })
+ }
+ 
+-export const showVersionModal = () => {
+-  const theme = themeState.theme
+-
+-  void Navigation.showOverlay({
+-    component: {
+-      name: VERSION_MODAL,
+-      options: {
+-        layout: {
+-          componentBackgroundColor: 'transparent',
+-        },
+-        overlay: {
+-          interceptTouchOutside: true,
+-        },
+-        statusBar: {
+-          drawBehind: true,
+-          visible: true,
+-          style: getStatusBarStyle(theme.isDark),
+-          backgroundColor: 'transparent',
+-        },
+-        navigationBar: {
+-          // visible: false,
+-          backgroundColor: theme['c-content-background'],
+-        },
+-        // animations: {
+-
+-        //   showModal: {
+-        //     enter: {
+-        //       enabled: true,
+-        //       alpha: {
+-        //         from: 0,
+-        //         to: 1,
+-        //         duration: 300,
+-        //       },
+-        //     },
+-        //     exit: {
+-        //       enabled: true,
+-        //       alpha: {
+-        //         from: 1,
+-        //         to: 0,
+-        //         duration: 300,
+-        //       },
+-        //     },
+-        //   },
+-        // },
+-      },
+-    },
+-  })
+-}
+-
+ export const showSyncModeModal = () => {
+   const theme = themeState.theme
+ 
 diff --git a/src/plugins/player/index.ts b/src/plugins/player/index.ts
 index 441e6cd..db4e09d 100644
 --- a/src/plugins/player/index.ts
@@ -180,12 +697,314 @@ index 9d52867..9c4142a 100644
      Capability.SkipToNext,
      Capability.SkipToPrevious,
    ],
+diff --git a/src/screens/Home/Views/Setting/settings/About.tsx b/src/screens/Home/Views/Setting/settings/About.tsx
+index 22db5f0..f2ef781 100644
+--- a/src/screens/Home/Views/Setting/settings/About.tsx
++++ b/src/screens/Home/Views/Setting/settings/About.tsx
+@@ -25,9 +25,6 @@ export default memo(() => {
+   const openIssuePage = () => {
+     void openUrl('https://github.com/lyswhut/lx-music-mobile/issues?q=is%3Aissue+')
+   }
+-  const openGHReleasePage = () => {
+-    void openUrl('https://github.com/lyswhut/lx-music-mobile/releases')
+-  }
+   const openFAQPage = () => {
+     void openUrl('https://lyswhut.github.io/lx-music-doc/mobile/faq')
+   }
+@@ -68,12 +65,6 @@ export default memo(() => {
+           <Text style={textLinkStyle}>https://github.com/lyswhut/lx-music-mobile</Text>
+         </TouchableOpacity>
+       </View>
+-      <View style={styles.part}>
+-        <Text style={styles.text}>最新版下载地址：</Text>
+-        <TouchableOpacity onPress={openGHReleasePage}>
+-          <Text style={textLinkStyle}>GitHub Releases</Text>
+-        </TouchableOpacity>
+-      </View>
+       <View style={styles.part}>
+         <Text style={styles.text} >软件的常见问题可转至：</Text>
+         <TouchableOpacity onPress={openFAQPage}>
+diff --git a/src/screens/Home/Views/Setting/settings/Version.tsx b/src/screens/Home/Views/Setting/settings/Version.tsx
+index e58f783..f5144e1 100644
+--- a/src/screens/Home/Views/Setting/settings/Version.tsx
++++ b/src/screens/Home/Views/Setting/settings/Version.tsx
+@@ -1,91 +1,77 @@
+-import { memo, useState, useEffect } from 'react'
+-import { StyleSheet, View } from 'react-native'
++import { memo, useEffect, useRef, useState } from 'react'
++import { NativeModules, StyleSheet, View } from 'react-native'
+ 
+ import Section from '../components/Section'
+-import SubTitle from '../components/SubTitle'
+ import Button from '../components/Button'
+-import { sizeFormate } from '@/utils'
+-
+ import { useI18n } from '@/lang'
+-import { useVersionDownloadProgressUpdated, useVersionInfo } from '@/store/version/hook'
+ import Text from '@/components/common/Text'
+-import { showModal } from '@/core/version'
++import { clipboardWriteText } from '@/utils/tools'
++import { getSystemQueueSyncDiagnostics } from '@/plugins/player/systemQueue'
++import { formatSystemQueueDiagnostics } from '@/plugins/player/systemQueueDiagnostics'
+ 
+ const currentVer = process.versions.app
++
++// This personal fork is updated only by manually replacing its signed APK.
++// Diagnostics are local snapshots, requested only by pressing the button.
+ export default memo(() => {
+   const t = useI18n()
+-  const versionInfo = useVersionInfo()
+-  // const versionStatus = useVrsionUpdateStatus()
+-  const [title, setTitle] = useState('')
+-  const [tip, setTip] = useState('')
+-  const progress = useVersionDownloadProgressUpdated()
+-  const handleOpenVersionModal = () => {
+-    // setVersionInfo({ showModal: true })
+-    showModal()
+-  }
+-
++  const [diagnostics, setDiagnostics] = useState('')
++  const [reading, setReading] = useState(false)
++  const mounted = useRef(true)
+   useEffect(() => {
+-    if (versionInfo.isLatest) {
+-      setTitle(t('version_tip_latest'))
+-      setTip('')
+-    } else if (versionInfo.isUnknown) {
+-      setTitle(t('version_title_unknown'))
+-      setTip(t('version_tip_unknown'))
+-    } else {
+-      switch (versionInfo.status) {
+-        case 'downloading':
+-          setTitle(t('version_title_new'))
+-          setTip(t('version_btn_downloading', {
+-            total: sizeFormate(progress.total),
+-            current: sizeFormate(progress.current),
+-            progress: progress.total ? (progress.current / progress.total * 100).toFixed(2) : '0',
+-          }))
+-          break
+-        case 'downloaded':
+-          setTitle(t('version_title_update'))
+-          setTip('')
+-          break
+-        case 'checking':
+-          setTitle(t('version_title_checking'))
+-          setTip('')
+-          break
+-        case 'error':
+-          setTitle(t('version_title_failed'))
+-          setTip(t('version_tip_failed'))
+-          break
+-        // case 'idle':
+-        //   break
+-        default:
+-          setTitle(t('version_title_new'))
+-          setTip('')
+-          break
++    mounted.current = true
++    return () => { mounted.current = false }
++  }, [])
++
++  const readDiagnostics = async() => {
++    if (reading) return
++    setReading(true)
++    let native: unknown
++    let status: 'ok' | 'bridge-unavailable' | 'read-failed' = 'bridge-unavailable'
++    try {
++      if (typeof NativeModules.TrackPlayerModule?.getSystemQueueDiagnostics === 'function') {
++        native = await NativeModules.TrackPlayerModule.getSystemQueueDiagnostics()
++        status = 'ok'
++      }
++    } catch {
++      status = 'read-failed'
++    } finally {
++      if (mounted.current) {
++        setDiagnostics(formatSystemQueueDiagnostics(native, getSystemQueueSyncDiagnostics(), currentVer, status))
++        setReading(false)
+       }
+     }
+-  }, [t, versionInfo, progress])
++  }
+ 
+   return (
+     <Section title={t('setting_version')}>
+-      <SubTitle title={title}>
+-        <View style={styles.desc}>
+-          <Text size={14}>{t('version_label_latest_ver')}{versionInfo.newVersion?.version}</Text>
+-          <Text size={14}>{t('version_label_current_ver')}{currentVer}</Text>
+-          {
+-            tip ? <Text size={14}>{tip}</Text> : null
+-          }
+-        </View>
+-        <View style={styles.btn}>
+-          <Button onPress={handleOpenVersionModal}>{t('setting_version_show_ver_modal')}</Button>
++      <View style={styles.desc}>
++        <Text size={14}>{t('version_label_current_ver')}{currentVer}</Text>
++        <Text size={14}>此个人版本已移除应用更新检查，后续仅手动更新安装包。</Text>
++        <Text size={13} style={styles.hint}>播放歌曲并展开系统播控后，点下方按钮采集本地诊断；不会联网或自动轮询。</Text>
++        <View style={styles.buttons}>
++          <Button disabled={reading} onPress={() => { void readDiagnostics() }}>{reading ? '读取中…' : '系统播控诊断'}</Button>
++          {diagnostics ? <Button onPress={() => { clipboardWriteText(diagnostics) }}>复制诊断</Button> : null}
+         </View>
+-      </SubTitle>
++        {diagnostics ? <Text selectable size={12}>{diagnostics}</Text> : null}
++      </View>
+     </Section>
+   )
+ })
+ 
+ const styles = StyleSheet.create({
+   desc: {
++    paddingLeft: 25,
++    paddingRight: 15,
++    marginBottom: 8,
++  },
++  hint: {
++    marginTop: 12,
+     marginBottom: 8,
+   },
+-  btn: {
++  buttons: {
+     flexDirection: 'row',
++    flexWrap: 'wrap',
++    marginBottom: 10,
+   },
+ })
+diff --git a/src/utils/version.js b/src/utils/version.js
+deleted file mode 100644
+index 88d2d5a..0000000
+--- a/src/utils/version.js
++++ /dev/null
+@@ -1,123 +0,0 @@
+-import { httpGet } from '@/utils/request'
+-import { author, name } from '../../package.json'
+-import { downloadFile, stopDownload, temporaryDirectoryPath } from '@/utils/fs'
+-import { getSupportedAbis, installApk } from '@/utils/nativeModules/utils'
+-import { APP_PROVIDER_NAME } from '@/config/constant'
+-
+-const abis = [
+-  'arm64-v8a',
+-  'armeabi-v7a',
+-  'x86_64',
+-  'x86',
+-  'universal',
+-]
+-
+-const address = [
+-  [`https://raw.githubusercontent.com/${author.name}/${name}/master/publish/version.json`, 'direct'],
+-  ['https://registry.npmjs.org/lx-music-mobile-version-info/latest', 'npm'],
+-  [`https://cdn.jsdelivr.net/gh/${author.name}/${name}/publish/version.json`, 'direct'],
+-  [`https://fastly.jsdelivr.net/gh/${author.name}/${name}/publish/version.json`, 'direct'],
+-  [`https://gcore.jsdelivr.net/gh/${author.name}/${name}/publish/version.json`, 'direct'],
+-  ['https://registry.npmmirror.com/lx-music-mobile-version-info/latest', 'npm'],
+-  ['https://gitee.com/lyswhut/lx-music-mobile-versions/raw/master/version.json', 'direct'],
+-  ['http://cdn.stsky.cn/lx-music/mobile/version.json', 'direct'],
+-]
+-
+-
+-const request = async(url, retryNum = 0) => {
+-  return new Promise((resolve, reject) => {
+-    httpGet(url, {
+-      timeout: 10000,
+-    }, (err, resp, body) => {
+-      if (err || resp.statusCode != 200) {
+-        ++retryNum >= 3
+-          ? reject(err || new Error(resp.statusMessage || resp.statusCode))
+-          : request(url, retryNum).then(resolve).catch(reject)
+-      } else resolve(body)
+-    })
+-  })
+-}
+-
+-const getDirectInfo = async(url) => {
+-  return request(url).then(info => {
+-    if (info.version == null) throw new Error('failed')
+-    return info
+-  })
+-}
+-
+-const getNpmPkgInfo = async(url) => {
+-  return request(url).then(json => {
+-    if (!json.versionInfo) throw new Error('failed')
+-    const info = JSON.parse(json.versionInfo)
+-    if (info.version == null) throw new Error('failed')
+-    return info
+-  })
+-}
+-
+-export const getVersionInfo = async(index = 0) => {
+-  const [url, source] = address[index]
+-  let promise
+-  switch (source) {
+-    case 'direct':
+-      promise = getDirectInfo(url)
+-      break
+-    case 'npm':
+-      promise = getNpmPkgInfo(url)
+-      break
+-  }
+-
+-  return promise.catch(async(err) => {
+-    index++
+-    if (index >= address.length) throw err
+-    return getVersionInfo(index)
+-  })
+-}
+-
+-const getTargetAbi = async() => {
+-  const supportedAbis = await getSupportedAbis()
+-  for (const abi of abis) {
+-    if (supportedAbis.includes(abi)) return abi
+-  }
+-  return abis[abis.length - 1]
+-}
+-let downloadJobId = null
+-const noop = (total, download) => {}
+-let apkSavePath
+-
+-export const downloadNewVersion = async(version, onDownload = noop) => {
+-  const abi = await getTargetAbi()
+-  const url = `https://github.com/${author.name}/${name}/releases/download/v${version}/${name}-v${version}-${abi}.apk`
+-  let savePath = temporaryDirectoryPath + '/lx-music-mobile.apk'
+-
+-  if (downloadJobId) stopDownload(downloadJobId)
+-
+-  const { jobId, promise } = downloadFile(url, savePath, {
+-    progressInterval: 500,
+-    connectionTimeout: 20000,
+-    readTimeout: 30000,
+-    begin({ statusCode, contentLength }) {
+-      onDownload(contentLength, 0)
+-      // switch (statusCode) {
+-      //   case 200:
+-      //   case 206:
+-      //     break
+-      //   default:
+-      //     onDownload(null, contentLength, 0)
+-      //     break
+-      // }
+-    },
+-    progress({ contentLength, bytesWritten }) {
+-      onDownload(contentLength, bytesWritten)
+-    },
+-  })
+-  downloadJobId = jobId
+-  return promise.then(() => {
+-    apkSavePath = savePath
+-    return updateApp()
+-  })
+-}
+-
+-export const updateApp = async() => {
+-  if (!apkSavePath) throw new Error('apk Save Path is null')
+-  await installApk(apkSavePath, APP_PROVIDER_NAME)
+-}
 diff --git a/src/plugins/player/systemQueue.ts b/src/plugins/player/systemQueue.ts
 new file mode 100644
-index 0000000..402bef4
+index 0000000..81ac300
 --- /dev/null
 +++ b/src/plugins/player/systemQueue.ts
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,107 @@
 +import { NativeModules, Platform } from 'react-native'
 +import playerState from '@/store/player/state'
 +import { getList } from '@/core/player/playInfo'
@@ -198,6 +1017,22 @@ index 0000000..402bef4
 +let scheduled = false
 +let lastPayload = ''
 +let updating = Promise.resolve()
++const syncDiagnostics = {
++  attempts: 0,
++  successes: 0,
++  lastSuccessItemCount: 0,
++  lastSuccessAt: 0,
++  lastErrorCategory: 'none' as 'none' | 'sync-failed',
++}
++
++// Counts/flags only. Never expose queue entries, identifiers, artwork or audio URLs.
++export const getSystemQueueSyncDiagnostics = () => ({
++  ...syncDiagnostics,
++  listenersInitialized: initialized,
++  playerInitialized: !!global.lx.playerStatus.isInitialized,
++  queueBridgeAvailable: typeof NativeModules.TrackPlayerModule?.setSystemQueue === 'function',
++  diagnosticsBridgeAvailable: typeof NativeModules.TrackPlayerModule?.getSystemQueueDiagnostics === 'function',
++})
 +const makeId = (entry: Selection) => JSON.stringify([entry.kind, entry.listId, entry.musicInfo.id])
 +
 +// Do not resolve stream URLs or change the playback queue for display metadata.
@@ -243,11 +1078,19 @@ index 0000000..402bef4
 +    selections = nextSelections
 +    const payload = JSON.stringify([tracks, activeId])
 +    if (!force && payload === lastPayload) return
++    syncDiagnostics.attempts++
 +    await NativeModules.TrackPlayerModule.setSystemQueue(tracks, activeId)
++    syncDiagnostics.successes++
++    syncDiagnostics.lastSuccessItemCount = tracks.length
++    syncDiagnostics.lastSuccessAt = Date.now()
++    syncDiagnostics.lastErrorCategory = 'none'
 +    // Native writes and this cache update are serialised by the updating promise chain.
 +    // eslint-disable-next-line require-atomic-updates
 +    lastPayload = payload
-+  }).catch((error: unknown) => { console.warn('System queue sync failed', error) })
++  }).catch(() => {
++    syncDiagnostics.lastErrorCategory = 'sync-failed'
++    console.warn('System queue sync failed')
++  })
 +}
 +
 +export const initializeSystemQueue = () => {
@@ -268,4 +1111,60 @@ index 0000000..402bef4
 +  global.state_event.on('playTempPlayListChanged', schedule)
 +  global.state_event.on('playMusicInfoChanged', schedule)
 +  schedule()
++}
+diff --git a/src/plugins/player/systemQueueDiagnostics.ts b/src/plugins/player/systemQueueDiagnostics.ts
+new file mode 100644
+index 0000000..e52afa5
+--- /dev/null
++++ b/src/plugins/player/systemQueueDiagnostics.ts
+@@ -0,0 +1,50 @@
++import type { getSystemQueueSyncDiagnostics } from './systemQueue'
++
++type SyncSnapshot = ReturnType<typeof getSystemQueueSyncDiagnostics>
++
++const booleanText = (value: unknown) => typeof value === 'boolean' ? (value ? '是' : '否') : '未知'
++const numberText = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? String(Math.trunc(value)) : '未知'
++const packageText = (value: unknown) => typeof value === 'string' && value.length <= 128 && /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$/.test(value) ? value : '无'
++
++// Only explicitly allowlisted scalar diagnostics are copied. Never stringify the
++// native object: it must not accidentally leak tracks, URLs or tokens later.
++export const formatSystemQueueDiagnostics = (nativeResult: unknown, js: SyncSnapshot, version: string, readStatus: 'ok' | 'bridge-unavailable' | 'read-failed') => {
++  const native = nativeResult != null && typeof nativeResult === 'object' ? nativeResult as Record<string, unknown> : {}
++  const lastSuccess = js.lastSuccessAt > 0 ? new Date(js.lastSuccessAt).toISOString() : '无'
++  const lines = [
++    `LX 系统播控诊断 | ${version}`,
++    `采集时间：${new Date().toISOString()}`,
++    `读取状态：${readStatus}`,
++    '',
++    'JavaScript 同步',
++    `播放器已初始化：${booleanText(js.playerInitialized)}`,
++    `队列监听已初始化：${booleanText(js.listenersInitialized)}`,
++    `队列桥接存在：${booleanText(js.queueBridgeAvailable)}`,
++    `诊断桥接存在：${booleanText(js.diagnosticsBridgeAvailable)}`,
++    `实际同步尝试 / 成功：${js.attempts} / ${js.successes}`,
++    `上次成功队列数量：${js.lastSuccessItemCount}`,
++    `上次成功时间：${lastSuccess}`,
++    `最近同步错误类别：${js.lastErrorCategory}`,
++    '',
++    'Android 系统接口',
++    `服务存在：${booleanText(native.serviceAvailable)}`,
++    `原生队列数量：${numberText(native.queueCount)}`,
++    `当前曲在队列内：${booleanText(native.activeItemPresent)}`,
++    `媒体会话激活：${booleanText(native.sessionActive)}`,
++    `播放引擎存在：${booleanText(native.playbackPresent)}`,
++    `原生播放状态码：${numberText(native.playbackState)}`,
++    `支持队列选曲：${booleanText(native.actionSkipToQueue)}`,
++    `支持媒体ID选曲：${booleanText(native.actionPlayFromId)}`,
++    `当前元数据含媒体ID：${booleanText(native.metadataMediaIdPresent)}`,
++    `原生队列更新次数：${numberText(native.nativeQueueUpdates)}`,
++    `vivo 能力标记：${numberText(native.vivoSupportMask)}`,
++    `浏览绑定 / 根请求：${numberText(native.browserBindCalls)} / ${numberText(native.browserRootCalls)}`,
++    `浏览允许 / 拒绝：${numberText(native.browserAccepted)} / ${numberText(native.browserRejected)}`,
++    `列表读取次数 / 上次数量：${numberText(native.browserChildrenCalls)} / ${numberText(native.lastChildrenCount)}`,
++    `最近浏览客户端包名：${packageText(native.lastBrowserPackage)}`,
++    `最近浏览客户端UID：${numberText(native.lastBrowserUid)}`,
++    '',
++    '仅本次手动采集；不包含歌曲、媒体ID、音频URL或认证信息。',
++  ]
++  return lines.join('\n')
 +}

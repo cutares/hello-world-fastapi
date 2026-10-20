@@ -5,14 +5,14 @@ const ts = require('../../source/node_modules/typescript');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../../source/src/plugins/player/systemQueue.ts'), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
 const music = id => ({ id: String(id), name: `Song ${id}`, singer: 'Singer', meta: { albumName: 'Album' } });
-function fixture() {
+function fixture(fail = false) {
   const state = { playMusicInfo: { musicInfo: music(4), listId: 'main', isTempPlay: false }, playInfo: { playerListId: 'main' }, tempPlayList: [] };
   let list = Array.from({ length: 10 }, (_, i) => music(i));
   const calls = [];
   const events = {};
   const module = { exports: {} };
   const ctx = { exports: module.exports, module, console, setTimeout, global: { lx: { playerStatus: { isInitialized: true } }, app_event: { on: (name, fn) => { events[name] = fn } }, state_event: { on: (name, fn) => { events[name] = fn } } }, require: name => {
-    if (name === 'react-native') return { Platform: { OS: 'android' }, NativeModules: { TrackPlayerModule: { setSystemQueue: async(...args) => { calls.push(args) } } } };
+    if (name === 'react-native') return { Platform: { OS: 'android' }, NativeModules: { TrackPlayerModule: { setSystemQueue: async(...args) => { if (fail) throw new Error('DO_NOT_EXPOSE_AUDIO_URL_OR_TOKEN'); calls.push(args) } } } };
     if (name === '@/store/player/state') return { default: state };
     if (name === '@/core/player/playInfo') return { getList: () => list };
     throw Error(name);
@@ -50,5 +50,14 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 5));
   restart.api.syncSystemQueue(); await flush();
   restart.api.syncSystemQueue(true); await flush();
   assert.equal(restart.calls.length, 2, 'force republishes identical queue after native service restart');
+  const snapshot = restart.api.getSystemQueueSyncDiagnostics();
+  assert.equal(snapshot.successes, 2); assert.equal(snapshot.lastSuccessItemCount, 10);
+  assert.ok(snapshot.lastSuccessAt > 0); assert.equal(snapshot.lastErrorCategory, 'none');
+  assert.equal(JSON.stringify(snapshot).includes('Song'), false);
+  const failing = fixture(true); failing.api.syncSystemQueue(); await flush();
+  const failure = failing.api.getSystemQueueSyncDiagnostics();
+  assert.equal(failure.lastErrorCategory, 'sync-failed');
+  assert.equal(failure.successes, 0);
+  assert.equal(JSON.stringify(failure).includes('DO_NOT_EXPOSE'), false);
   console.log('PASS: queue metadata, active ID, dedup, 10k list bound, temp queue bound, stale IDs, temporary current, empty queue, listeners.');
 })().catch(error => { console.error(error); process.exitCode = 1 });

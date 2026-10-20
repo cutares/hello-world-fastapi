@@ -29,3 +29,8 @@ SDK 包仅在 runner 缺少时安装；用户已同意该构建所需 Android SD
 - https://github.com/actions/upload-artifact → `ea165f8d65b6e75b540449e92b4886f43607fa02`
 
 Apache-2.0 许可副本保存在 licenses。发布该任务文件必须先获仓库所有者同意；不要同时发布无关业务代码、构建缓存或签名材料。
+
+## queue2
+This revision removes all application update checks (automatic and manual), and adds a user-triggered, local-only system media diagnostic snapshot. It is not a confirmed fix for the OriginOS disabled playlist control. No song details, stream URLs, tokens, or signing keys are included in diagnostics.
+
+The queue2 native adapter now also implements observed vivo service discovery, root/current-list nodes and a bounded capability mask for supported controls and queue selection, based on interoperability inspection of the public official Qishui 21.3.0 package. No third-party authentication token is included. Real-device compatibility remains to be verified.
