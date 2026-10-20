@@ -38,7 +38,7 @@ assert 'FLAG_PLAYABLE' in method(s, 'getBrowserItems', 'boolean currentFirst')
 assert 'notifyChildrenChanged(BROWSER_ROOT)' in method(s, 'onSystemQueueChanged')
 assert 'service.onSystemQueueChanged()' in method(m, 'setSystemQueue')
 assert 'queue.size() >= 200' in m and 'mediaId.length() > 512' in m
-assert 'diagnosticCount++ < 100' in method(s, 'logSystemQueue')
+assert 'logSystemQueue' not in s
 assert 'if (!known) return' in method(e, 'onPlayFromMediaId')
 assert 'getPlayback' not in method(e, 'onSkipToQueueItem')
 manifest = ET.parse(r / 'AndroidManifest.xml').getroot()
@@ -48,4 +48,4 @@ assert service.get(a + 'exported') == 'true'
 actions = [x.get(a + 'name') for x in service.findall('./intent-filter/action')]
 assert 'android.media.browse.MediaBrowserService' in actions
 assert 'android.intent.action.MEDIA_BUTTON' in actions
-print('PASS: browser inheritance/binding, single session lifetime, bind-only idle, stop-vs-destroy, UID/package trust, bounded browse queue, notifications, bounded local logs, stale selection rejection, manifest actions.')
+print('PASS: browser inheritance/binding, single session lifetime, bind-only idle, stop-vs-destroy, UID/package trust, bounded browse queue, notifications, clean release without diagnostic logs, stale selection rejection, manifest actions.')

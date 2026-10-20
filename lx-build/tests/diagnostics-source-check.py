@@ -1,22 +1,16 @@
+"""Clean release must contain no native queue diagnostic API or instrumentation."""
 from pathlib import Path
 r=Path(__file__).resolve().parents[2]/'track-player/android/src/main/java/com/guichaguri/trackplayer'
-module=(r/'module/MusicModule.java').read_text()
-method=module.split('public void getSystemQueueDiagnostics(final Promise callback) {',1)[1].split('    @ReactMethod',1)[0]
-assert 'UiThreadUtil.runOnUiThread' in method
-assert 'waitForConnection' not in method and 'startService' not in method and 'setupPlayer' not in method
-assert '"serviceAvailable", false' in method and '"bridgeAvailable", true' in method
-assert 'error.getMessage' not in method and 'error.toString' not in method
-service=(r/'service/MusicService.java').read_text()
-assert 'diagnosticEvents.size() >= 24' in service and 'diagnosticEvents.removeFirst()' in service
-assert 'safe.length() > 256' in service
-assert "message.replace('\\n', ' ').replace('\\r', ' ')" in service
-for k in ['browserBindCalls','browserRootCalls','browserAccepted','browserRejected','browserChildrenCalls','lastChildrenCount','lastBrowserPackage','lastBrowserUid','events','playbackPresent','playbackState']:
- assert f'"{k}"' in service
-metadata=(r/'service/metadata/MetadataManager.java').read_text()
-getter=metadata.split('public Bundle getSystemQueueDiagnostics() {',1)[1].split('    private void publishMetadata',1)[0]
-for k in ['queueCount','activeItemPresent','sessionActive','actionSkipToQueue','actionPlayFromId','metadataMediaIdPresent','nativeQueueUpdates']:
- assert f'"{k}"' in getter
-for bad in ['putString(', 'putParcelable', 'putStringArrayList', 'METADATA_KEY_TITLE', '.getMediaId()', '.getDescription()']:
- assert bad not in getter, bad
-assert 'getState()' in service and 'getPlayback().getQueue()' not in service
-print('PASS: diagnostics schema, bounded sanitized events, no playback initialization, no media details in snapshot; source-level only.')
+sources={p.name:p.read_text() for p in r.rglob('*.java')}
+all_source='\n'.join(sources.values())
+for forbidden in ['getSystemQueueDiagnostics', 'logSystemQueue', 'LXSystemQueue', 'diagnosticEvents', 'diagnosticCount', 'diagnostic_failed', 'nativeQueueUpdates', 'browserBindCalls', 'browserRootCalls', 'browserAccepted', 'browserRejected', 'browserChildrenCalls', 'lastChildrenCount', 'lastBrowserPackage', 'lastBrowserUid']:
+    assert forbidden not in all_source, forbidden
+# Ensure instrumentation removal cannot accidentally strip the working bridge/protocol.
+assert 'public void setSystemQueue(' in sources['MusicModule.java']
+assert 'VIVO_DISCOVERY_ACTION' in sources['MusicService.java']
+assert 'vivoSubscribedParents' in sources['MusicService.java']
+assert 'isTrustedForMediaControl' in sources['MusicService.java']
+assert 'publishMetadata(prevMetadata)' in sources['MetadataManager.java']
+assert 'VIVO_QUEUE_SUPPORT = 256L | 2048L' in sources['MetadataManager.java']
+assert 'hasSystemQueueMediaId(mediaId)' in sources['ButtonEvents.java']
+print('PASS: native diagnostic API, logs, counters, event buffers and retained client identities removed; functional queue/vivo bridge preserved.')

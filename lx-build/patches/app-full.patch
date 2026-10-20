@@ -58,16 +58,15 @@ index f203997..814b76b 100644
          android:grantUriPermissions="true">
          <!-- you might need the tools:replace thing to workaround rn-fetch-blob or other definitions of provider -->
 diff --git a/package.json b/package.json
-index bd9d2ce..d7f468d 100644
+index bd9d2ce..27c2b5b 100644
 --- a/package.json
 +++ b/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "lx-music-mobile",
--  "version": "1.9.1",
+   "version": "1.9.1",
 -  "versionCode": 78,
-+  "version": "1.9.1-originos-queue2",
-+  "versionCode": 80,
++  "versionCode": 81,
    "private": true,
    "scripts": {
      "dev": "react-native run-android --active-arch-only",
@@ -725,32 +724,27 @@ index 22db5f0..f2ef781 100644
          <Text style={styles.text} >软件的常见问题可转至：</Text>
          <TouchableOpacity onPress={openFAQPage}>
 diff --git a/src/screens/Home/Views/Setting/settings/Version.tsx b/src/screens/Home/Views/Setting/settings/Version.tsx
-index e58f783..f5144e1 100644
+index e58f783..9d63f6b 100644
 --- a/src/screens/Home/Views/Setting/settings/Version.tsx
 +++ b/src/screens/Home/Views/Setting/settings/Version.tsx
-@@ -1,91 +1,77 @@
+@@ -1,91 +1,29 @@
 -import { memo, useState, useEffect } from 'react'
--import { StyleSheet, View } from 'react-native'
-+import { memo, useEffect, useRef, useState } from 'react'
-+import { NativeModules, StyleSheet, View } from 'react-native'
++import { memo } from 'react'
+ import { StyleSheet, View } from 'react-native'
  
  import Section from '../components/Section'
 -import SubTitle from '../components/SubTitle'
- import Button from '../components/Button'
+-import Button from '../components/Button'
 -import { sizeFormate } from '@/utils'
 -
  import { useI18n } from '@/lang'
 -import { useVersionDownloadProgressUpdated, useVersionInfo } from '@/store/version/hook'
  import Text from '@/components/common/Text'
 -import { showModal } from '@/core/version'
-+import { clipboardWriteText } from '@/utils/tools'
-+import { getSystemQueueSyncDiagnostics } from '@/plugins/player/systemQueue'
-+import { formatSystemQueueDiagnostics } from '@/plugins/player/systemQueueDiagnostics'
  
  const currentVer = process.versions.app
 +
 +// This personal fork is updated only by manually replacing its signed APK.
-+// Diagnostics are local snapshots, requested only by pressing the button.
  export default memo(() => {
    const t = useI18n()
 -  const versionInfo = useVersionInfo()
@@ -763,10 +757,7 @@ index e58f783..f5144e1 100644
 -    showModal()
 -  }
 -
-+  const [diagnostics, setDiagnostics] = useState('')
-+  const [reading, setReading] = useState(false)
-+  const mounted = useRef(true)
-   useEffect(() => {
+-  useEffect(() => {
 -    if (versionInfo.isLatest) {
 -      setTitle(t('version_tip_latest'))
 -      setTip('')
@@ -801,31 +792,10 @@ index e58f783..f5144e1 100644
 -          setTitle(t('version_title_new'))
 -          setTip('')
 -          break
-+    mounted.current = true
-+    return () => { mounted.current = false }
-+  }, [])
-+
-+  const readDiagnostics = async() => {
-+    if (reading) return
-+    setReading(true)
-+    let native: unknown
-+    let status: 'ok' | 'bridge-unavailable' | 'read-failed' = 'bridge-unavailable'
-+    try {
-+      if (typeof NativeModules.TrackPlayerModule?.getSystemQueueDiagnostics === 'function') {
-+        native = await NativeModules.TrackPlayerModule.getSystemQueueDiagnostics()
-+        status = 'ok'
-+      }
-+    } catch {
-+      status = 'read-failed'
-+    } finally {
-+      if (mounted.current) {
-+        setDiagnostics(formatSystemQueueDiagnostics(native, getSystemQueueSyncDiagnostics(), currentVer, status))
-+        setReading(false)
-       }
-     }
+-      }
+-    }
 -  }, [t, versionInfo, progress])
-+  }
- 
+-
    return (
      <Section title={t('setting_version')}>
 -      <SubTitle title={title}>
@@ -838,16 +808,11 @@ index e58f783..f5144e1 100644
 -        </View>
 -        <View style={styles.btn}>
 -          <Button onPress={handleOpenVersionModal}>{t('setting_version_show_ver_modal')}</Button>
+-        </View>
+-      </SubTitle>
 +      <View style={styles.desc}>
 +        <Text size={14}>{t('version_label_current_ver')}{currentVer}</Text>
-+        <Text size={14}>此个人版本已移除应用更新检查，后续仅手动更新安装包。</Text>
-+        <Text size={13} style={styles.hint}>播放歌曲并展开系统播控后，点下方按钮采集本地诊断；不会联网或自动轮询。</Text>
-+        <View style={styles.buttons}>
-+          <Button disabled={reading} onPress={() => { void readDiagnostics() }}>{reading ? '读取中…' : '系统播控诊断'}</Button>
-+          {diagnostics ? <Button onPress={() => { clipboardWriteText(diagnostics) }}>复制诊断</Button> : null}
-         </View>
--      </SubTitle>
-+        {diagnostics ? <Text selectable size={12}>{diagnostics}</Text> : null}
++        <Text size={14}>已关闭应用更新检查，后续仅手动更新。</Text>
 +      </View>
      </Section>
    )
@@ -857,18 +822,11 @@ index e58f783..f5144e1 100644
    desc: {
 +    paddingLeft: 25,
 +    paddingRight: 15,
-+    marginBottom: 8,
-+  },
-+  hint: {
-+    marginTop: 12,
      marginBottom: 8,
    },
 -  btn: {
-+  buttons: {
-     flexDirection: 'row',
-+    flexWrap: 'wrap',
-+    marginBottom: 10,
-   },
+-    flexDirection: 'row',
+-  },
  })
 diff --git a/src/utils/version.js b/src/utils/version.js
 deleted file mode 100644
@@ -1001,10 +959,10 @@ index 88d2d5a..0000000
 -}
 diff --git a/src/plugins/player/systemQueue.ts b/src/plugins/player/systemQueue.ts
 new file mode 100644
-index 0000000..81ac300
+index 0000000..6bd4196
 --- /dev/null
 +++ b/src/plugins/player/systemQueue.ts
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,85 @@
 +import { NativeModules, Platform } from 'react-native'
 +import playerState from '@/store/player/state'
 +import { getList } from '@/core/player/playInfo'
@@ -1017,22 +975,6 @@ index 0000000..81ac300
 +let scheduled = false
 +let lastPayload = ''
 +let updating = Promise.resolve()
-+const syncDiagnostics = {
-+  attempts: 0,
-+  successes: 0,
-+  lastSuccessItemCount: 0,
-+  lastSuccessAt: 0,
-+  lastErrorCategory: 'none' as 'none' | 'sync-failed',
-+}
-+
-+// Counts/flags only. Never expose queue entries, identifiers, artwork or audio URLs.
-+export const getSystemQueueSyncDiagnostics = () => ({
-+  ...syncDiagnostics,
-+  listenersInitialized: initialized,
-+  playerInitialized: !!global.lx.playerStatus.isInitialized,
-+  queueBridgeAvailable: typeof NativeModules.TrackPlayerModule?.setSystemQueue === 'function',
-+  diagnosticsBridgeAvailable: typeof NativeModules.TrackPlayerModule?.getSystemQueueDiagnostics === 'function',
-+})
 +const makeId = (entry: Selection) => JSON.stringify([entry.kind, entry.listId, entry.musicInfo.id])
 +
 +// Do not resolve stream URLs or change the playback queue for display metadata.
@@ -1078,17 +1020,11 @@ index 0000000..81ac300
 +    selections = nextSelections
 +    const payload = JSON.stringify([tracks, activeId])
 +    if (!force && payload === lastPayload) return
-+    syncDiagnostics.attempts++
 +    await NativeModules.TrackPlayerModule.setSystemQueue(tracks, activeId)
-+    syncDiagnostics.successes++
-+    syncDiagnostics.lastSuccessItemCount = tracks.length
-+    syncDiagnostics.lastSuccessAt = Date.now()
-+    syncDiagnostics.lastErrorCategory = 'none'
 +    // Native writes and this cache update are serialised by the updating promise chain.
 +    // eslint-disable-next-line require-atomic-updates
 +    lastPayload = payload
 +  }).catch(() => {
-+    syncDiagnostics.lastErrorCategory = 'sync-failed'
 +    console.warn('System queue sync failed')
 +  })
 +}
@@ -1111,60 +1047,4 @@ index 0000000..81ac300
 +  global.state_event.on('playTempPlayListChanged', schedule)
 +  global.state_event.on('playMusicInfoChanged', schedule)
 +  schedule()
-+}
-diff --git a/src/plugins/player/systemQueueDiagnostics.ts b/src/plugins/player/systemQueueDiagnostics.ts
-new file mode 100644
-index 0000000..e52afa5
---- /dev/null
-+++ b/src/plugins/player/systemQueueDiagnostics.ts
-@@ -0,0 +1,50 @@
-+import type { getSystemQueueSyncDiagnostics } from './systemQueue'
-+
-+type SyncSnapshot = ReturnType<typeof getSystemQueueSyncDiagnostics>
-+
-+const booleanText = (value: unknown) => typeof value === 'boolean' ? (value ? '是' : '否') : '未知'
-+const numberText = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? String(Math.trunc(value)) : '未知'
-+const packageText = (value: unknown) => typeof value === 'string' && value.length <= 128 && /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$/.test(value) ? value : '无'
-+
-+// Only explicitly allowlisted scalar diagnostics are copied. Never stringify the
-+// native object: it must not accidentally leak tracks, URLs or tokens later.
-+export const formatSystemQueueDiagnostics = (nativeResult: unknown, js: SyncSnapshot, version: string, readStatus: 'ok' | 'bridge-unavailable' | 'read-failed') => {
-+  const native = nativeResult != null && typeof nativeResult === 'object' ? nativeResult as Record<string, unknown> : {}
-+  const lastSuccess = js.lastSuccessAt > 0 ? new Date(js.lastSuccessAt).toISOString() : '无'
-+  const lines = [
-+    `LX 系统播控诊断 | ${version}`,
-+    `采集时间：${new Date().toISOString()}`,
-+    `读取状态：${readStatus}`,
-+    '',
-+    'JavaScript 同步',
-+    `播放器已初始化：${booleanText(js.playerInitialized)}`,
-+    `队列监听已初始化：${booleanText(js.listenersInitialized)}`,
-+    `队列桥接存在：${booleanText(js.queueBridgeAvailable)}`,
-+    `诊断桥接存在：${booleanText(js.diagnosticsBridgeAvailable)}`,
-+    `实际同步尝试 / 成功：${js.attempts} / ${js.successes}`,
-+    `上次成功队列数量：${js.lastSuccessItemCount}`,
-+    `上次成功时间：${lastSuccess}`,
-+    `最近同步错误类别：${js.lastErrorCategory}`,
-+    '',
-+    'Android 系统接口',
-+    `服务存在：${booleanText(native.serviceAvailable)}`,
-+    `原生队列数量：${numberText(native.queueCount)}`,
-+    `当前曲在队列内：${booleanText(native.activeItemPresent)}`,
-+    `媒体会话激活：${booleanText(native.sessionActive)}`,
-+    `播放引擎存在：${booleanText(native.playbackPresent)}`,
-+    `原生播放状态码：${numberText(native.playbackState)}`,
-+    `支持队列选曲：${booleanText(native.actionSkipToQueue)}`,
-+    `支持媒体ID选曲：${booleanText(native.actionPlayFromId)}`,
-+    `当前元数据含媒体ID：${booleanText(native.metadataMediaIdPresent)}`,
-+    `原生队列更新次数：${numberText(native.nativeQueueUpdates)}`,
-+    `vivo 能力标记：${numberText(native.vivoSupportMask)}`,
-+    `浏览绑定 / 根请求：${numberText(native.browserBindCalls)} / ${numberText(native.browserRootCalls)}`,
-+    `浏览允许 / 拒绝：${numberText(native.browserAccepted)} / ${numberText(native.browserRejected)}`,
-+    `列表读取次数 / 上次数量：${numberText(native.browserChildrenCalls)} / ${numberText(native.lastChildrenCount)}`,
-+    `最近浏览客户端包名：${packageText(native.lastBrowserPackage)}`,
-+    `最近浏览客户端UID：${numberText(native.lastBrowserUid)}`,
-+    '',
-+    '仅本次手动采集；不包含歌曲、媒体ID、音频URL或认证信息。',
-+  ]
-+  return lines.join('\n')
 +}

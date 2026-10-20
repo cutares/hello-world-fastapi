@@ -10,15 +10,16 @@ function fixture(fail = false) {
   let list = Array.from({ length: 10 }, (_, i) => music(i));
   const calls = [];
   const events = {};
+  const warnings = [];
   const module = { exports: {} };
-  const ctx = { exports: module.exports, module, console, setTimeout, global: { lx: { playerStatus: { isInitialized: true } }, app_event: { on: (name, fn) => { events[name] = fn } }, state_event: { on: (name, fn) => { events[name] = fn } } }, require: name => {
+  const ctx = { exports: module.exports, module, console: { ...console, warn: message => warnings.push(message) }, setTimeout, global: { lx: { playerStatus: { isInitialized: true } }, app_event: { on: (name, fn) => { events[name] = fn } }, state_event: { on: (name, fn) => { events[name] = fn } } }, require: name => {
     if (name === 'react-native') return { Platform: { OS: 'android' }, NativeModules: { TrackPlayerModule: { setSystemQueue: async(...args) => { if (fail) throw new Error('DO_NOT_EXPOSE_AUDIO_URL_OR_TOKEN'); calls.push(args) } } } };
     if (name === '@/store/player/state') return { default: state };
     if (name === '@/core/player/playInfo') return { getList: () => list };
     throw Error(name);
   } };
   vm.runInNewContext(compiled, ctx);
-  return { state, calls, events, api: module.exports, setList: next => { list = next }, ctx };
+  return { state, calls, events, warnings, setFail: value => { fail = value }, api: module.exports, setList: next => { list = next }, ctx };
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
 (async() => {
@@ -50,14 +51,12 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 5));
   restart.api.syncSystemQueue(); await flush();
   restart.api.syncSystemQueue(true); await flush();
   assert.equal(restart.calls.length, 2, 'force republishes identical queue after native service restart');
-  const snapshot = restart.api.getSystemQueueSyncDiagnostics();
-  assert.equal(snapshot.successes, 2); assert.equal(snapshot.lastSuccessItemCount, 10);
-  assert.ok(snapshot.lastSuccessAt > 0); assert.equal(snapshot.lastErrorCategory, 'none');
-  assert.equal(JSON.stringify(snapshot).includes('Song'), false);
   const failing = fixture(true); failing.api.syncSystemQueue(); await flush();
-  const failure = failing.api.getSystemQueueSyncDiagnostics();
-  assert.equal(failure.lastErrorCategory, 'sync-failed');
-  assert.equal(failure.successes, 0);
-  assert.equal(JSON.stringify(failure).includes('DO_NOT_EXPOSE'), false);
+  assert.equal(failing.calls.length, 0);
+  assert.deepEqual(failing.warnings, ['System queue sync failed']);
+  assert.equal(JSON.stringify(failing.warnings).includes('DO_NOT_EXPOSE'), false);
+  failing.setFail(false); failing.api.syncSystemQueue(); await flush();
+  assert.equal(failing.calls.length, 1, 'failed writes remain retryable and do not poison serialized chain');
+  assert.equal(failing.calls[0][0].length, 10);
   console.log('PASS: queue metadata, active ID, dedup, 10k list bound, temp queue bound, stale IDs, temporary current, empty queue, listeners.');
 })().catch(error => { console.error(error); process.exitCode = 1 });
