@@ -5,7 +5,7 @@ const ts = require('../../source/node_modules/typescript');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../../source/src/plugins/player/systemQueue.ts'), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
 const music = id => ({ id: String(id), name: `Song ${id}`, singer: 'Singer', meta: { albumName: 'Album' } });
-function fixture(fail = false) {
+function fixture(fail = false, contextBridge = false) {
   const state = { playMusicInfo: { musicInfo: music(4), listId: 'main', isTempPlay: false }, playInfo: { playerListId: 'main' }, tempPlayList: [] };
   let list = Array.from({ length: 10 }, (_, i) => music(i));
   const calls = [];
@@ -13,7 +13,7 @@ function fixture(fail = false) {
   const warnings = [];
   const module = { exports: {} };
   const ctx = { exports: module.exports, module, console: { ...console, warn: message => warnings.push(message) }, setTimeout, global: { lx: { playerStatus: { isInitialized: true } }, app_event: { on: (name, fn) => { events[name] = fn } }, state_event: { on: (name, fn) => { events[name] = fn } } }, require: name => {
-    if (name === 'react-native') return { Platform: { OS: 'android' }, NativeModules: { TrackPlayerModule: { setSystemQueue: async(...args) => { if (fail) throw new Error('DO_NOT_EXPOSE_AUDIO_URL_OR_TOKEN'); calls.push(args) } } } };
+    if (name === 'react-native') return { Platform: { OS: 'android' }, NativeModules: { TrackPlayerModule: { ...(contextBridge ? { setSystemQueueContext: async(...args) => { if (fail) throw Error('failure'); calls.push(args); return true } } : {}), setSystemQueue: async(...args) => { if (fail) throw new Error('DO_NOT_EXPOSE_AUDIO_URL_OR_TOKEN'); calls.push(args) } } } };
     if (name === '@/store/player/state') return { default: state };
     if (name === '@/core/player/playInfo') return { getList: () => list };
     throw Error(name);
@@ -58,5 +58,19 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 5));
   failing.setFail(false); failing.api.syncSystemQueue(); await flush();
   assert.equal(failing.calls.length, 1, 'failed writes remain retryable and do not poison serialized chain');
   assert.equal(failing.calls[0][0].length, 10);
+  assert.equal(failing.api.getCurrentSystemMediaId(), failing.calls[0][1]);
+  const atomic = fixture(false, true);
+  await atomic.api.syncSystemQueue();
+  const first = atomic.calls[0][2]; assert.ok(first > 1e12);
+  atomic.state.playMusicInfo = { listId: 'main', musicInfo: music('5') };
+  assert.equal(atomic.api.getCurrentSystemMediaId(), '');
+  await atomic.api.syncSystemQueue();
+  atomic.state.playMusicInfo = { listId: 'main', musicInfo: music('4') };
+  await atomic.api.syncSystemQueue();
+  assert.ok(atomic.calls[1][2] > first && atomic.calls[2][2] > atomic.calls[1][2]);
+  atomic.api.advanceSystemMediaGeneration(); await atomic.api.syncSystemQueue();
+  assert.ok(atomic.calls[3][2] > atomic.calls[2][2]);
+  const failedContext = fixture(true, true); await failedContext.api.syncSystemQueue();
+  assert.equal(failedContext.api.getCurrentSystemMediaId(), '', 'unpublished context has no media ID');
   console.log('PASS: queue metadata, active ID, dedup, 10k list bound, temp queue bound, stale IDs, temporary current, empty queue, listeners.');
 })().catch(error => { console.error(error); process.exitCode = 1 });

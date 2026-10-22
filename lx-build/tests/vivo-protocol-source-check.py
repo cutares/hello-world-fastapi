@@ -17,7 +17,7 @@ assert 'if (!trusted) return null;' in s
 assert 'isTrustedForMediaControl' in s and 'getPackagesForUid(uid)' in s
 assert 'new Intent(intent)' in s and 'browserIntent.setAction("android.media.browse.MediaBrowserService")' in s
 m=(r/'java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java').read_text()
-assert 'VIVO_BASIC_SUPPORT = 1L | 2L | 4L | 16L' in m
+assert 'VIVO_BASIC_SUPPORT = 1L | 2L | 4L | 8L | 16L | 64L' in m
 assert 'VIVO_QUEUE_SUPPORT = 256L | 2048L' in m
 assert 'systemQueue.isEmpty() ? 0L : VIVO_QUEUE_SUPPORT' in m
 assert 'metadata.putLong(VIVO_SUPPORT_EVENT, support)' in m

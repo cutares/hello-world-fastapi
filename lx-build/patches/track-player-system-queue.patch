@@ -22,10 +22,10 @@ index ad8c9ab..c4c7bf6 100644
          </service>
  
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/module/MusicModule.java b/android/src/main/java/com/guichaguri/trackplayer/module/MusicModule.java
-index 020d049..8cf68d7 100644
+index 020d049..fcd132e 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/module/MusicModule.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/module/MusicModule.java
-@@ -302,6 +302,28 @@ public class MusicModule extends ReactContextBaseJavaModule implements ServiceCo
+@@ -302,6 +302,86 @@ public class MusicModule extends ReactContextBaseJavaModule implements ServiceCo
          });
      }
  
@@ -48,6 +48,64 @@ index 020d049..8cf68d7 100644
 +            } catch (Exception error) {
 +                callback.reject("system_queue_failed", error);
 +            }
++        });
++    }
++
++    @ReactMethod
++    public void setSystemLyrics(String mediaId, double generation, String lyric, final Promise callback) {
++        if (Double.isNaN(generation) || Double.isInfinite(generation) || generation < 0 || generation > 9007199254740991D || generation != Math.floor(generation)) {
++            callback.reject("invalid_system_generation", "Expected a non-negative safe integer");
++            return;
++        }
++        waitForConnection(() -> {
++            try { callback.resolve(binder.setSystemLyrics(mediaId, (long) generation, lyric)); }
++            catch (Exception error) { callback.reject("system_control_failed", error); }
++        });
++    }
++
++    @ReactMethod
++    public void setSystemFavorite(String mediaId, double generation, boolean favorite, final Promise callback) {
++        if (Double.isNaN(generation) || Double.isInfinite(generation) || generation < 0 || generation > 9007199254740991D || generation != Math.floor(generation)) {
++            callback.reject("invalid_system_generation", "Expected a non-negative safe integer");
++            return;
++        }
++        waitForConnection(() -> {
++            try { callback.resolve(binder.setSystemFavorite(mediaId, (long) generation, favorite)); }
++            catch (Exception error) { callback.reject("system_control_failed", error); }
++        });
++    }
++
++    @ReactMethod
++    public void setSystemRepeatMode(int mode, final Promise callback) {
++        if (mode < 0 || mode > 3) {
++            callback.reject("invalid_repeat_mode", "Expected 0, 1, 2 or 3");
++            return;
++        }
++        waitForConnection(() -> {
++            try { binder.setSystemRepeatMode(mode); callback.resolve(true); }
++            catch (Exception error) { callback.reject("system_repeat_failed", error); }
++        });
++    }
++
++    @ReactMethod
++    public void setSystemQueueContext(ReadableArray entries, String activeMediaId, double generation, final Promise callback) {
++        if (Double.isNaN(generation) || Double.isInfinite(generation) || generation < 0 || generation > 9007199254740991D || generation != Math.floor(generation)) {
++            callback.reject("invalid_queue_generation", "Expected a non-negative safe integer");
++            return;
++        }
++        final List<Bundle> queue = new ArrayList<>();
++        try {
++            for (int i = 0; i < Math.min(entries.size(), 200); i++) {
++                ReadableMap entry = entries.getMap(i);
++                if (entry != null) queue.add(Arguments.toBundle(entry));
++            }
++        } catch (Exception error) {
++            callback.reject("invalid_system_queue", error);
++            return;
++        }
++        waitForConnection(() -> {
++            try { callback.resolve(binder.setSystemQueueContext(queue, activeMediaId, (long) generation)); }
++            catch (Exception error) { callback.reject("system_queue_failed", error); }
 +        });
 +    }
 +
@@ -85,7 +143,7 @@ index 8282e5b..3d7df35 100644
  
    /**
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java b/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java
-index f41035a..6660ba5 100644
+index f41035a..f7ba87a 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java
 @@ -1,6 +1,7 @@
@@ -96,7 +154,7 @@ index f41035a..6660ba5 100644
  import android.os.Bundle;
  import android.support.v4.media.session.MediaSessionCompat;
  
-@@ -60,6 +61,10 @@ public class MusicBinder extends Binder {
+@@ -60,6 +61,26 @@ public class MusicBinder extends Binder {
          metadata.setActive(true);
      }
  
@@ -104,10 +162,26 @@ index f41035a..6660ba5 100644
 +        manager.getMetadata().setSystemQueue(entries, activeMediaId);
 +    }
 +
++    public boolean setSystemQueueContext(List<Bundle> entries, String activeMediaId, long generation) {
++        return manager.getMetadata().setSystemQueueContext(entries, activeMediaId, generation);
++    }
++
++    public boolean setSystemLyrics(String mediaId, long generation, String lyric) {
++        return manager.getMetadata().setSystemLyrics(mediaId, generation, lyric);
++    }
++
++    public boolean setSystemFavorite(String mediaId, long generation, boolean favorite) {
++        return manager.getMetadata().setSystemFavorite(mediaId, generation, favorite);
++    }
++
++    public void setSystemRepeatMode(int mode) {
++        manager.getMetadata().setSystemRepeatMode(mode);
++    }
++
      public void clearNowPlayingMetadata() {
          manager.getMetadata().setActive(false);
      }
-@@ -77,7 +82,7 @@ public class MusicBinder extends Binder {
+@@ -77,7 +98,7 @@ public class MusicBinder extends Binder {
      }
  
      public void destroy() {
@@ -309,7 +383,7 @@ index 505f244..e13a0af 100644
          }
      }
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/metadata/ButtonEvents.java b/android/src/main/java/com/guichaguri/trackplayer/service/metadata/ButtonEvents.java
-index 7f3773b..69fb87a 100644
+index 7f3773b..3178600 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/service/metadata/ButtonEvents.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/service/metadata/ButtonEvents.java
 @@ -12,8 +12,6 @@ import com.guichaguri.trackplayer.module.MusicEvents;
@@ -353,19 +427,46 @@ index 7f3773b..69fb87a 100644
      }
  
      @Override
+@@ -135,8 +132,22 @@ public class ButtonEvents extends MediaSessionCompat.Callback {
+         service.emit(MusicEvents.BUTTON_SEEK_TO, bundle);
+     }
+ 
++    @Override
++    public void onCustomAction(String action, Bundle extras) {
++        if ("vivomusicmix.media.action.PLAY_MODE".equals(action)) {
++            service.emit("remote-play-mode-change", null);
++            return;
++        }
++        super.onCustomAction(action, extras);
++    }
++
+     @Override
+     public void onSetRating(RatingCompat rating) {
++        if (rating == null) return;
++        if (rating.getRatingStyle() == RatingCompat.RATING_HEART && rating.isRated()) {
++            manager.getMetadata().requestSystemFavorite(rating.hasHeart());
++            return;
++        }
+         Bundle bundle = new Bundle();
+         Utils.setRating(bundle, "rating", rating);
+         service.emit(MusicEvents.BUTTON_SET_RATING, bundle);
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java b/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
-index e185728..541ae4e 100644
+index e185728..e18f327 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
-@@ -17,6 +17,7 @@ import android.net.Uri;
+@@ -16,7 +16,11 @@ import android.graphics.drawable.Drawable;
+ import android.net.Uri;
  import android.os.Build;
  import android.os.Bundle;
++import android.os.Handler;
++import android.os.Looper;
++import android.text.TextUtils;
  import android.support.v4.media.MediaMetadataCompat;
 +import android.support.v4.media.MediaDescriptionCompat;
  import android.support.v4.media.RatingCompat;
  import android.support.v4.media.session.MediaSessionCompat;
  import android.support.v4.media.session.PlaybackStateCompat;
-@@ -44,6 +45,8 @@ import com.guichaguri.trackplayer.service.player.ExoPlayback;
+@@ -44,6 +48,8 @@ import com.guichaguri.trackplayer.service.player.ExoPlayback;
  
  import java.util.ArrayList;
  import java.util.List;
@@ -374,15 +475,82 @@ index e185728..541ae4e 100644
  
  /**
   * @author Guichaguri
-@@ -51,10 +54,94 @@ import java.util.List;
+@@ -51,10 +57,174 @@ import java.util.List;
  @UnstableApi
  public class MetadataManager {
  
 +    private static final String VIVO_SUPPORT_EVENT = "vivomusicmix.media.metadata.support_event";
 +    // Verified shipping protocol: control 1, info 2, image 4, seek 16,
-+    // current-list 256, play-index 2048. Do NOT advertise lyrics/favorite/loop.
-+    private static final long VIVO_BASIC_SUPPORT = 1L | 2L | 4L | 16L;
++    // lyrics 8, favorite 64, current-list 256, play-index 2048; loop 128 only for mapped modes.
++    private static final long VIVO_BASIC_SUPPORT = 1L | 2L | 4L | 8L | 16L | 64L;
 +    private static final long VIVO_QUEUE_SUPPORT = 256L | 2048L;
++    private static final String VIVO_LOOP_MODE = "vivomusicmix.media.metadata.LOOP_MODE";
++    private static final String NO_LYRICS = "[00:00.00]暂无歌词";
++    private static final int MAX_LYRIC_CHARS = 65536;
++    private long lyricGeneration = -1;
++    private String controlMediaId = null;
++    private boolean systemFavorite = false;
++    private int systemRepeatMode = 0;
++    private boolean destroyed = false;
++
++    public boolean setSystemLyrics(String mediaId, long generation, String lyric) {
++        String activeId = systemQueueIds.get(activeSystemQueueId);
++        if (destroyed || mediaId == null || !mediaId.equals(activeId) || generation < lyricGeneration) return false;
++        lyricGeneration = generation;
++        controlMediaId = mediaId;
++        publishLyrics(activeId, lyric == null || lyric.isEmpty() || lyric.length() > MAX_LYRIC_CHARS ? NO_LYRICS : lyric);
++        return true;
++    }
++
++    public boolean setSystemFavorite(String mediaId, long generation, boolean favorite) {
++        String activeId = systemQueueIds.get(activeSystemQueueId);
++        if (destroyed || mediaId == null || !mediaId.equals(activeId) || generation < lyricGeneration) return false;
++        lyricGeneration = generation;
++        controlMediaId = mediaId;
++        systemFavorite = favorite;
++        if (prevMetadata != null) publishMetadata(prevMetadata);
++        return true;
++    }
++
++    public void requestSystemFavorite(boolean favorite) {
++        String activeId = systemQueueIds.get(activeSystemQueueId);
++        if (activeId == null || !activeId.equals(controlMediaId) || lyricGeneration < 0) return;
++        Bundle request = new Bundle();
++        request.putString("id", activeId);
++        request.putDouble("generation", lyricGeneration);
++        request.putBoolean("favorite", favorite);
++        service.emit("remote-favorite-change", request);
++    }
++
++    private void publishLyrics(String mediaId, String lyric) {
++        // Preserve unrelated extras; misspellings are the shipping vivo ABI.
++        Bundle current = session.getController().getExtras();
++        Bundle extras = current == null ? new Bundle() : new Bundle(current);
++        extras.putString("vivomusicmix.meida.extra.key.action", "vivomusicmix.extra.lrc_change");
++        extras.putString("vivomusicmix.extra.key.meidia_id", mediaId == null ? "" : mediaId);
++        extras.putString("vivomusicmix.extra.key.lyric", lyric);
++        session.setExtras(extras);
++    }
++
++    public void setSystemRepeatMode(int mode) {
++        systemRepeatMode = mode;
++        if (prevMetadata != null) publishMetadata(prevMetadata);
++    }
++
++    public boolean setSystemQueueContext(List<Bundle> entries, String activeMediaId, long generation) {
++        if (destroyed || generation < lyricGeneration) return false;
++        boolean changedGeneration = generation > lyricGeneration;
++        // Register before publishing the queue, including same-ID A -> B -> A.
++        lyricGeneration = generation;
++        if (changedGeneration) {
++            controlMediaId = null;
++            systemFavorite = false;
++        }
++        setSystemQueue(entries, activeMediaId);
++        if (changedGeneration) publishLyrics(systemQueueIds.get(activeSystemQueueId), NO_LYRICS);
++        return true;
++    }
++
      private final MusicService service;
      private final MusicManager manager;
      private final MediaSessionCompat session;
@@ -394,6 +562,7 @@ index e185728..541ae4e 100644
 +    private long activeSystemQueueId = MediaSessionCompat.QueueItem.UNKNOWN_ID;
 +
 +    public void setSystemQueue(List<Bundle> entries, String activeMediaId) {
++        String previousActiveId = systemQueueIds.get(activeSystemQueueId);
 +        Map<String, Long> previousIds = new HashMap<>();
 +        for (Map.Entry<Long, String> entry : systemQueueIds.entrySet()) {
 +            previousIds.put(entry.getValue(), entry.getKey());
@@ -420,6 +589,12 @@ index e185728..541ae4e 100644
 +        systemQueue = queue;
 +        session.setQueueTitle("LX Music");
 +        session.setQueue(queue);
++        String activeId = systemQueueIds.get(activeSystemQueueId);
++        if (!TextUtils.equals(previousActiveId, activeId) || activeId == null) {
++            controlMediaId = null;
++            systemFavorite = false;
++            publishLyrics(activeId, NO_LYRICS);
++        }
 +        if (prevMetadata != null) publishMetadata(prevMetadata);
 +        service.onSystemQueueChanged();
 +        if (manager.getPlayback() != null) {
@@ -439,8 +614,14 @@ index e185728..541ae4e 100644
 +    }
 +
 +    private void publishMetadata(MediaMetadataCompat.Builder metadata) {
++        // Fresh overlay: mode 0 removes LOOP_MODE rather than retaining an old value.
++        metadata = new MediaMetadataCompat.Builder(metadata.build());
 +        long support = VIVO_BASIC_SUPPORT | (systemQueue.isEmpty() ? 0L : VIVO_QUEUE_SUPPORT);
++        if (systemRepeatMode >= 1 && systemRepeatMode <= 3) support |= 128L;
 +        metadata.putLong(VIVO_SUPPORT_EVENT, support);
++        metadata.putRating(MediaMetadataCompat.METADATA_KEY_USER_RATING, RatingCompat.newHeartRating(systemFavorite));
++        metadata.putRating(MediaMetadataCompat.METADATA_KEY_RATING, RatingCompat.newHeartRating(systemFavorite));
++        if (systemRepeatMode != 0) metadata.putLong(VIVO_LOOP_MODE, systemRepeatMode);
 +        metadata.putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, systemQueueIds.get(activeSystemQueueId));
 +        session.setMetadata(metadata.build());
 +    }
@@ -469,7 +650,24 @@ index e185728..541ae4e 100644
      private int ratingType = RatingCompat.RATING_NONE;
      private int forwardJumpInterval = 15;
      private int backwardJumpInterval = 15;
-@@ -204,7 +291,7 @@ public class MetadataManager {
+@@ -78,7 +248,7 @@ public class MetadataManager {
+         this.session = new MediaSessionCompat(service, "TrackPlayer", null, null);
+ 
+         session.setFlags(MediaSessionCompat.FLAG_HANDLES_QUEUE_COMMANDS);
+-        session.setCallback(new ButtonEvents(service, manager));
++        session.setCallback(new ButtonEvents(service, manager), new Handler(Looper.getMainLooper()));
+ 
+         Context context = service.getApplicationContext();
+         String packageName = context.getPackageName();
+@@ -196,6 +366,7 @@ public class MetadataManager {
+      * @param bitmap The new artwork
+      */
+     protected void updateArtwork(Bitmap bitmap) {
++        if (destroyed || manager.getPlayback() == null) return;
+         Track track = manager.getPlayback().getCurrentTrack();
+         if(track == null) return;
+ 
+@@ -204,7 +375,7 @@ public class MetadataManager {
          metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bitmap);
          builder.setLargeIcon(bitmap);
  
@@ -478,7 +676,7 @@ index e185728..541ae4e 100644
          updateNotification();
      }
  
-@@ -222,7 +309,7 @@ public class MetadataManager {
+@@ -222,7 +393,7 @@ public class MetadataManager {
        if (data.containsKey("lyric")) {
          prevMetadata.putString("android.media.metadata.LYRICS", data.getString("lyric"));
        }
@@ -487,7 +685,13 @@ index e185728..541ae4e 100644
        updatePlaybackState(manager.getPlayback());
      }
  
-@@ -260,7 +347,7 @@ public class MetadataManager {
+@@ -255,12 +426,13 @@ public class MetadataManager {
+                 .into(new CustomTarget<Bitmap>() {
+                     @Override
+                     public void onResourceReady(@NonNull Bitmap resource, Transition<? super Bitmap> transition) {
++                        if (destroyed || prevMetadata != metadata) return;
+                         prevArtResource = resource;
+ 
                          metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, resource);
                          builder.setLargeIcon(resource);
  
@@ -496,7 +700,7 @@ index e185728..541ae4e 100644
                          updateNotification();
                          artworkTarget = null;
                      }
-@@ -274,7 +361,7 @@ public class MetadataManager {
+@@ -274,7 +446,7 @@ public class MetadataManager {
          builder.setContentText(track.artist);
          builder.setSubText(track.album);
  
@@ -505,7 +709,7 @@ index e185728..541ae4e 100644
  
          updatePlayback(isPlaying);
          updatePlaybackState(playback);
-@@ -340,7 +427,7 @@ public class MetadataManager {
+@@ -340,7 +512,7 @@ public class MetadataManager {
  
      @SuppressLint("RestrictedApi")
      public void updatePlayback(ExoPlayback playback, boolean playing) {
@@ -514,7 +718,7 @@ index e185728..541ae4e 100644
          updatePlayback(playing);
          updatePlaybackState(playback);
          updateNotification();
-@@ -354,6 +441,7 @@ public class MetadataManager {
+@@ -354,6 +526,7 @@ public class MetadataManager {
          // Updates the media session state
          PlaybackStateCompat.Builder pb = new PlaybackStateCompat.Builder();
          pb.setActions(actions);
@@ -522,3 +726,16 @@ index e185728..541ae4e 100644
          pb.setState(playback.getState(), playback.getPosition(), playback.getRate());
          pb.setBufferedPosition(playback.getBufferedPosition());
  
+@@ -368,6 +541,12 @@ public class MetadataManager {
+     }
+ 
+     public void destroy() {
++        destroyed = true;
++        if (artworkTarget != null) {
++            Glide.with(service.getApplicationContext()).clear(artworkTarget);
++            artworkTarget = null;
++        }
++        prevMetadata = null;
+         service.stopForeground(true);
+ 
+         session.setActive(false);

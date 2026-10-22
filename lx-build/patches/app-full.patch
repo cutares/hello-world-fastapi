@@ -58,7 +58,7 @@ index f203997..814b76b 100644
          android:grantUriPermissions="true">
          <!-- you might need the tools:replace thing to workaround rn-fetch-blob or other definitions of provider -->
 diff --git a/package.json b/package.json
-index bd9d2ce..27c2b5b 100644
+index bd9d2ce..a0f4ff0 100644
 --- a/package.json
 +++ b/package.json
 @@ -1,7 +1,7 @@
@@ -66,7 +66,7 @@ index bd9d2ce..27c2b5b 100644
    "name": "lx-music-mobile",
    "version": "1.9.1",
 -  "versionCode": 78,
-+  "versionCode": 81,
++  "versionCode": 82,
    "private": true,
    "scripts": {
      "dev": "react-native run-android --active-arch-only",
@@ -104,7 +104,7 @@ index f2801e8..8168400 100644
      }
    } else {
 diff --git a/src/core/player/player.ts b/src/core/player/player.ts
-index 1fd9049..54c6d6c 100644
+index 1fd9049..4d80734 100644
 --- a/src/core/player/player.ts
 +++ b/src/core/player/player.ts
 @@ -28,6 +28,7 @@ import { checkIgnoringBatteryOptimization, checkNotificationPermission, debounce
@@ -115,7 +115,52 @@ index 1fd9049..54c6d6c 100644
  
  // import { checkMusicFileAvailable } from '@renderer/utils/music'
  
-@@ -666,3 +667,27 @@ export const dislikeMusic = async() => {
+@@ -177,7 +178,7 @@ const handleRestorePlay = async(restorePlayInfo: LX.Player.SavedPlayInfo) => {
+   })
+ 
+   void getLyricInfo({ musicInfo }).then((lyricInfo) => {
+-    if (musicInfo.id != playMusicInfo.musicInfo?.id) return
++    if (playMusicInfo !== playerState.playMusicInfo || musicInfo.id != playMusicInfo.musicInfo?.id) return
+     setMusicInfo({
+       lrc: lyricInfo.lyric,
+       tlrc: lyricInfo.tlyric,
+@@ -188,7 +189,7 @@ const handleRestorePlay = async(restorePlayInfo: LX.Player.SavedPlayInfo) => {
+     global.app_event.lyricUpdated()
+   }).catch((err) => {
+     console.log(err)
+-    if (musicInfo.id != playMusicInfo.musicInfo?.id) return
++    if (playMusicInfo !== playerState.playMusicInfo || musicInfo.id != playMusicInfo.musicInfo?.id) return
+     setStatusText(global.i18n.t('lyric__load_error'))
+   })
+ 
+@@ -197,6 +198,8 @@ const handleRestorePlay = async(restorePlayInfo: LX.Player.SavedPlayInfo) => {
+ 
+ 
+ const debouncePlay = debounceBackgroundTimer((musicInfo: LX.Player.PlayMusic) => {
++  const playContext = playerState.playMusicInfo
++  if (musicInfo.id !== playContext.musicInfo?.id) return
+   setMusicUrl(musicInfo)
+ 
+   void getPicPath({ musicInfo, listId: playerState.playMusicInfo.listId }).then((url: string) => {
+@@ -209,7 +212,7 @@ const debouncePlay = debounceBackgroundTimer((musicInfo: LX.Player.PlayMusic) =>
+   })
+ 
+   void getLyricInfo({ musicInfo }).then((lyricInfo) => {
+-    if (musicInfo.id != playerState.playMusicInfo.musicInfo?.id) return
++    if (playContext !== playerState.playMusicInfo || musicInfo.id != playerState.playMusicInfo.musicInfo?.id) return
+     setMusicInfo({
+       lrc: lyricInfo.lyric,
+       tlrc: lyricInfo.tlyric,
+@@ -220,7 +223,7 @@ const debouncePlay = debounceBackgroundTimer((musicInfo: LX.Player.PlayMusic) =>
+     global.app_event.lyricUpdated()
+   }).catch((err) => {
+     console.log(err)
+-    if (musicInfo.id != playerState.playMusicInfo.musicInfo?.id) return
++    if (playContext !== playerState.playMusicInfo || musicInfo.id != playerState.playMusicInfo.musicInfo?.id) return
+     setStatusText(global.i18n.t('lyric__load_error'))
+   })
+ }, 200)
+@@ -666,3 +669,27 @@ export const dislikeMusic = async() => {
    await playNext(true)
  }
  
@@ -130,14 +175,14 @@ index 1fd9049..54c6d6c 100644
 +  }
 +  if (selected.kind === 'temp') {
 +    const index = playerState.tempPlayList.findIndex(item => item.listId === selected.listId && item.musicInfo.id === selected.musicInfo.id)
-+    if (index < 0) { syncSystemQueue(); return }
++    if (index < 0) { void syncSystemQueue(); return }
 +    const item = playerState.tempPlayList[index]
 +    removeTempPlayList(index)
 +    setPlayMusicInfo(item.listId, item.musicInfo, true)
 +  } else {
 +    if (selected.listId !== playerState.playInfo.playerListId) return
 +    const musicInfo = getList(selected.listId).find(item => item.id === selected.musicInfo.id)
-+    if (!musicInfo) { syncSystemQueue(); return }
++    if (!musicInfo) { void syncSystemQueue(); return }
 +    setPlayMusicInfo(selected.listId, musicInfo, false)
 +    if (settingState.setting['player.isAutoCleanPlayedList']) clearPlayedList()
 +  }
@@ -641,21 +686,24 @@ index 72bcfbb..0bcc077 100644
    const theme = themeState.theme
  
 diff --git a/src/plugins/player/index.ts b/src/plugins/player/index.ts
-index 441e6cd..db4e09d 100644
+index 441e6cd..9dde5af 100644
 --- a/src/plugins/player/index.ts
 +++ b/src/plugins/player/index.ts
-@@ -1,4 +1,5 @@
+@@ -1,4 +1,6 @@
  import TrackPlayer from 'react-native-track-player'
++import { initializeSystemMedia, syncSystemMedia } from './systemMedia'
 +import { initializeSystemQueue, syncSystemQueue } from './systemQueue'
  import { updateOptions, setVolume, setPlaybackRate, migratePlayerCache } from './utils'
  
  // const listenEvent = () => {
-@@ -38,6 +39,8 @@ const initial = async({ volume, playRate, cacheSize, isHandleAudioFocus, isEnabl
+@@ -38,6 +40,10 @@ const initial = async({ volume, playRate, cacheSize, isHandleAudioFocus, isEnabl
    global.lx.playerStatus.isInitialized = true
    global.lx.playerStatus.isIniting = false
    await updateOptions()
 +  initializeSystemQueue()
-+  syncSystemQueue(true)
++  await syncSystemQueue(true)
++  initializeSystemMedia()
++  void syncSystemMedia(true)
    await setVolume(volume)
    await setPlaybackRate(playRate)
    // listenEvent()
@@ -683,6 +731,258 @@ index 91b2502..36c70ae 100644
    TrackPlayer.addEventListener(TPEvent.RemotePlay, () => {
      // console.log('remote-play')
      play()
+diff --git a/src/plugins/player/systemMedia.ts b/src/plugins/player/systemMedia.ts
+new file mode 100644
+index 0000000..648ef08
+--- /dev/null
++++ b/src/plugins/player/systemMedia.ts
+@@ -0,0 +1,130 @@
++import { DeviceEventEmitter, NativeModules, Platform } from 'react-native'
++import playerState from '@/store/player/state'
++import settingState from '@/store/setting/state'
++import { updateSetting } from '@/core/common'
++import { LIST_IDS } from '@/config/constant'
++import { getListMusics } from '@/utils/listManage'
++import { addListMusics, removeListMusics } from '@/core/list'
++import { getCurrentSystemMediaId, syncSystemQueue, getSystemMediaGeneration, advanceSystemMediaGeneration } from './systemQueue'
++
++let initialized = false
++let context = playerState.playMusicInfo
++let generation = getSystemMediaGeneration()
++let stopped = false
++const synced = { clearedGeneration: -1, lastLyrics: '', lastMode: -1 }
++let pending = Promise.resolve()
++
++// The system protocol has no honest equivalent for sequential or stop-after-one.
++export const getSystemRepeatMode = () => {
++  switch (settingState.setting['player.togglePlayMethod']) {
++    case 'listLoop': return 1
++    case 'singleLoop': return 2
++    case 'random': return 3
++    default: return 0
++  }
++}
++
++export const changeSystemPlayMode = () => {
++  const mode = settingState.setting['player.togglePlayMethod']
++  updateSetting({ 'player.togglePlayMethod': mode === 'listLoop' ? 'singleLoop' : mode === 'singleLoop' ? 'random' : 'listLoop' })
++}
++
++const updateContext = () => {
++  generation = getSystemMediaGeneration()
++  if (context === playerState.playMusicInfo) return
++  context = playerState.playMusicInfo
++  stopped = false
++  synced.lastLyrics = ''
++}
++
++export const syncSystemMedia = async(force = false) => {
++  updateContext()
++  if (Platform.OS !== 'android' || !global.lx.playerStatus.isInitialized) return
++  pending = pending.then(async() => {
++    if (force) {
++      synced.clearedGeneration = -1
++      synced.lastLyrics = ''
++      synced.lastMode = -1
++    }
++    if (!global.lx.playerStatus.isInitialized) return
++    const bridge = NativeModules.TrackPlayerModule
++    const mode = getSystemRepeatMode()
++    if (typeof bridge?.setSystemRepeatMode === 'function' && mode !== synced.lastMode) {
++      if (await bridge.setSystemRepeatMode(mode) !== false) synced.lastMode = mode
++    }
++    if (typeof bridge?.setSystemLyrics !== 'function') return
++    const currentGeneration = generation
++    const currentContext = context
++    await syncSystemQueue()
++    if (currentGeneration !== generation || currentContext !== playerState.playMusicInfo) return
++    const mediaId = getCurrentSystemMediaId()
++    // Clear first even when returning to the same song (A -> B -> A).
++    if (synced.clearedGeneration !== currentGeneration) {
++      if (await bridge.setSystemLyrics(mediaId, currentGeneration, '') === false) return
++      if (currentGeneration !== generation) return
++      synced.clearedGeneration = currentGeneration
++      synced.lastLyrics = ''
++    }
++    const info = playerState.musicInfo
++    const raw = !stopped && context.musicInfo?.id === info.id ? info.lrc : null
++    // Reject oversize data as a whole; never cut a timed LRC in the middle.
++    const lyric = typeof raw === 'string' && raw.length <= 65_536 ? raw : ''
++    const payload = JSON.stringify([mediaId, currentGeneration, lyric])
++    if (payload !== synced.lastLyrics) {
++      if (await bridge.setSystemLyrics(mediaId, currentGeneration, lyric) === false) return
++      if (currentGeneration === generation) synced.lastLyrics = payload
++    }
++    if (typeof bridge.setSystemFavorite === 'function' && mediaId && currentContext.musicInfo) {
++      const music = 'progress' in currentContext.musicInfo ? currentContext.musicInfo.metadata.musicInfo : currentContext.musicInfo
++      const favorites = await getListMusics(LIST_IDS.LOVE)
++      if (currentGeneration !== generation || currentContext !== playerState.playMusicInfo) return
++      await bridge.setSystemFavorite(mediaId, currentGeneration, favorites.some(item => item.id === music.id))
++    }
++  }).catch(() => { console.warn('System media sync failed') })
++  return pending
++}
++
++let favoriteUpdates = Promise.resolve()
++export const changeSystemFavorite = async(event: unknown) => {
++  if (!event || typeof event !== 'object') return
++  const { id, generation: requestedGeneration, favorite } = event as { id?: unknown, generation?: unknown, favorite?: unknown }
++  if (typeof id !== 'string' || typeof requestedGeneration !== 'number' || typeof favorite !== 'boolean') return
++  const selectedContext = playerState.playMusicInfo
++  favoriteUpdates = favoriteUpdates.then(async() => {
++    updateContext()
++    if (id !== getCurrentSystemMediaId() || requestedGeneration !== generation || selectedContext !== playerState.playMusicInfo) return
++    const selected = selectedContext.musicInfo
++    if (!selected) return
++    const music = 'progress' in selected ? selected.metadata.musicInfo : selected
++    // Apply the requested state to My Favorites only, never toggle another list.
++    if (favorite) await addListMusics(LIST_IDS.LOVE, [music], settingState.setting['list.addMusicLocationType'])
++    else await removeListMusics(LIST_IDS.LOVE, [music.id])
++    await syncSystemMedia()
++  }).catch(() => { console.warn('System favorite update failed'); void syncSystemMedia() })
++  return favoriteUpdates
++}
++
++export const initializeSystemMedia = () => {
++  if (initialized) return
++  initialized = true
++  const sync = () => { void syncSystemMedia() }
++  const clear = () => {
++    generation = advanceSystemMediaGeneration()
++    stopped = true
++    sync()
++  }
++  global.state_event.on('playMusicInfoChanged', sync)
++  global.state_event.on('playerMusicInfoChanged', sync)
++  global.state_event.on('playInfoChanged', sync)
++  global.state_event.on('playTempPlayListChanged', sync)
++  global.app_event.on('myListMusicUpdate', sync)
++  global.app_event.on('lyricUpdated', sync)
++  global.app_event.on('stop', clear)
++  global.app_event.on('error', clear)
++  global.app_event.on('play', () => { stopped = false; sync() })
++  global.state_event.on('configUpdated', (keys) => {
++    if (keys.includes('player.togglePlayMethod')) sync()
++  })
++  DeviceEventEmitter.addListener('remote-play-mode-change', changeSystemPlayMode)
++  DeviceEventEmitter.addListener('remote-favorite-change', (event: unknown) => { void changeSystemFavorite(event) })
++}
+diff --git a/src/plugins/player/systemQueue.ts b/src/plugins/player/systemQueue.ts
+new file mode 100644
+index 0000000..d398f68
+--- /dev/null
++++ b/src/plugins/player/systemQueue.ts
+@@ -0,0 +1,110 @@
++import { NativeModules, Platform } from 'react-native'
++import playerState from '@/store/player/state'
++import { getList } from '@/core/player/playInfo'
++
++interface Selection { kind: 'list' | 'temp' | 'current', listId: string | null, musicInfo: LX.Player.PlayMusic }
++interface QueueEntry { id: string, title: string, artist: string, album: string }
++const limit = 200
++let selections = new Map<string, Selection>()
++let initialized = false
++let scheduled = false
++let lastPayload = ''
++let currentSystemMediaId = ''
++let publishedContext: typeof playerState.playMusicInfo | null = null
++let publishedGeneration = -1
++let mediaContext = playerState.playMusicInfo
++let mediaGeneration = Date.now()
++export const getSystemMediaGeneration = () => {
++  if (mediaContext !== playerState.playMusicInfo) {
++    mediaContext = playerState.playMusicInfo
++    mediaGeneration++
++  }
++  return mediaGeneration
++}
++export const advanceSystemMediaGeneration = () => {
++  getSystemMediaGeneration()
++  return ++mediaGeneration
++}
++export const getCurrentSystemMediaId = () => publishedContext === playerState.playMusicInfo && publishedGeneration === getSystemMediaGeneration() ? currentSystemMediaId : ''
++let updating = Promise.resolve()
++const makeId = (entry: Selection) => JSON.stringify([entry.kind, entry.listId, entry.musicInfo.id])
++
++// Do not resolve stream URLs or change the playback queue for display metadata.
++const buildQueue = () => {
++  const current = playerState.playMusicInfo
++  const mainListId = playerState.playInfo.playerListId
++  const source = getList(mainListId)
++  const currentIndex = source.findIndex(music => music.id === current.musicInfo?.id)
++  const start = Math.max(0, currentIndex - Math.floor(limit / 2))
++  const entries: Selection[] = []
++  if (current.musicInfo && (current.isTempPlay || currentIndex < 0)) {
++    entries.push({ kind: 'current', listId: current.listId, musicInfo: current.musicInfo })
++  }
++  // Reserve some room for explicitly queued "play later" entries.
++  const tempLimit = Math.min(playerState.tempPlayList.length, 50)
++  for (const item of source.slice(start, start + limit - tempLimit - entries.length)) {
++    entries.push({ kind: 'list', listId: mainListId, musicInfo: item })
++  }
++  for (const item of playerState.tempPlayList.slice(0, tempLimit)) {
++    entries.push({ kind: 'temp', listId: item.listId, musicInfo: item.musicInfo })
++  }
++  const nextSelections = new Map<string, Selection>()
++  const tracks: QueueEntry[] = []
++  let activeId = ''
++  for (const entry of entries) {
++    const id = makeId(entry)
++    if (nextSelections.has(id) || id.length > 512) continue
++    nextSelections.set(id, entry)
++    const music = 'progress' in entry.musicInfo ? entry.musicInfo.metadata.musicInfo : entry.musicInfo
++    tracks.push({ id, title: music.name.slice(0, 128), artist: music.singer.slice(0, 128), album: (music.meta.albumName ?? '').slice(0, 128) })
++    if (entry.kind !== 'temp' && entry.musicInfo.id === current.musicInfo?.id && entry.listId === current.listId) activeId = id
++  }
++  return { nextSelections, tracks, activeId }
++}
++
++export const getSystemQueueSelection = (id: unknown): Selection | undefined => typeof id === 'string' ? selections.get(id) : undefined
++
++export const syncSystemQueue = async(force = false) => {
++  if (Platform.OS !== 'android' || !global.lx.playerStatus.isInitialized || typeof NativeModules.TrackPlayerModule?.setSystemQueue !== 'function') return
++  // Serialise native writes; always build from the latest JS state at execution time.
++  updating = updating.then(async() => {
++    const { nextSelections, tracks, activeId } = buildQueue()
++    selections = nextSelections
++    const generation = getSystemMediaGeneration()
++    const context = playerState.playMusicInfo
++    const payload = JSON.stringify([tracks, activeId, generation])
++    if (!force && payload === lastPayload) return
++    if (typeof NativeModules.TrackPlayerModule.setSystemQueueContext === 'function') {
++      if (await NativeModules.TrackPlayerModule.setSystemQueueContext(tracks, activeId, generation) === false) return
++    } else await NativeModules.TrackPlayerModule.setSystemQueue(tracks, activeId)
++    // Native writes and this cache update are serialised by the updating promise chain.
++    // eslint-disable-next-line require-atomic-updates
++    lastPayload = payload
++    currentSystemMediaId = activeId
++    publishedContext = context
++    publishedGeneration = generation
++  }).catch(() => {
++    console.warn('System queue sync failed')
++  })
++  return updating
++}
++
++export const initializeSystemQueue = () => {
++  if (initialized) return
++  initialized = true
++  const schedule = () => {
++    if (scheduled) return
++    scheduled = true
++    setTimeout(() => {
++      scheduled = false
++      void syncSystemQueue()
++    }, 0)
++  }
++  global.app_event.on('musicToggled', schedule)
++  global.app_event.on('myListMusicUpdate', schedule)
++  global.app_event.on('downloadListUpdate', schedule)
++  global.state_event.on('playInfoChanged', schedule)
++  global.state_event.on('playTempPlayListChanged', schedule)
++  global.state_event.on('playMusicInfoChanged', schedule)
++  schedule()
++}
 diff --git a/src/plugins/player/utils.ts b/src/plugins/player/utils.ts
 index 9d52867..9c4142a 100644
 --- a/src/plugins/player/utils.ts
@@ -957,94 +1257,3 @@ index 88d2d5a..0000000
 -  if (!apkSavePath) throw new Error('apk Save Path is null')
 -  await installApk(apkSavePath, APP_PROVIDER_NAME)
 -}
-diff --git a/src/plugins/player/systemQueue.ts b/src/plugins/player/systemQueue.ts
-new file mode 100644
-index 0000000..6bd4196
---- /dev/null
-+++ b/src/plugins/player/systemQueue.ts
-@@ -0,0 +1,85 @@
-+import { NativeModules, Platform } from 'react-native'
-+import playerState from '@/store/player/state'
-+import { getList } from '@/core/player/playInfo'
-+
-+interface Selection { kind: 'list' | 'temp' | 'current', listId: string | null, musicInfo: LX.Player.PlayMusic }
-+interface QueueEntry { id: string, title: string, artist: string, album: string }
-+const limit = 200
-+let selections = new Map<string, Selection>()
-+let initialized = false
-+let scheduled = false
-+let lastPayload = ''
-+let updating = Promise.resolve()
-+const makeId = (entry: Selection) => JSON.stringify([entry.kind, entry.listId, entry.musicInfo.id])
-+
-+// Do not resolve stream URLs or change the playback queue for display metadata.
-+const buildQueue = () => {
-+  const current = playerState.playMusicInfo
-+  const mainListId = playerState.playInfo.playerListId
-+  const source = getList(mainListId)
-+  const currentIndex = source.findIndex(music => music.id === current.musicInfo?.id)
-+  const start = Math.max(0, currentIndex - Math.floor(limit / 2))
-+  const entries: Selection[] = []
-+  if (current.musicInfo && (current.isTempPlay || currentIndex < 0)) {
-+    entries.push({ kind: 'current', listId: current.listId, musicInfo: current.musicInfo })
-+  }
-+  // Reserve some room for explicitly queued "play later" entries.
-+  const tempLimit = Math.min(playerState.tempPlayList.length, 50)
-+  for (const item of source.slice(start, start + limit - tempLimit - entries.length)) {
-+    entries.push({ kind: 'list', listId: mainListId, musicInfo: item })
-+  }
-+  for (const item of playerState.tempPlayList.slice(0, tempLimit)) {
-+    entries.push({ kind: 'temp', listId: item.listId, musicInfo: item.musicInfo })
-+  }
-+  const nextSelections = new Map<string, Selection>()
-+  const tracks: QueueEntry[] = []
-+  let activeId = ''
-+  for (const entry of entries) {
-+    const id = makeId(entry)
-+    if (nextSelections.has(id) || id.length > 512) continue
-+    nextSelections.set(id, entry)
-+    const music = 'progress' in entry.musicInfo ? entry.musicInfo.metadata.musicInfo : entry.musicInfo
-+    tracks.push({ id, title: music.name.slice(0, 128), artist: music.singer.slice(0, 128), album: (music.meta.albumName ?? '').slice(0, 128) })
-+    if (entry.kind !== 'temp' && entry.musicInfo.id === current.musicInfo?.id && entry.listId === current.listId) activeId = id
-+  }
-+  return { nextSelections, tracks, activeId }
-+}
-+
-+export const getSystemQueueSelection = (id: unknown): Selection | undefined => typeof id === 'string' ? selections.get(id) : undefined
-+
-+export const syncSystemQueue = (force = false) => {
-+  if (Platform.OS !== 'android' || !global.lx.playerStatus.isInitialized || typeof NativeModules.TrackPlayerModule?.setSystemQueue !== 'function') return
-+  // Serialise native writes; always build from the latest JS state at execution time.
-+  updating = updating.then(async() => {
-+    const { nextSelections, tracks, activeId } = buildQueue()
-+    selections = nextSelections
-+    const payload = JSON.stringify([tracks, activeId])
-+    if (!force && payload === lastPayload) return
-+    await NativeModules.TrackPlayerModule.setSystemQueue(tracks, activeId)
-+    // Native writes and this cache update are serialised by the updating promise chain.
-+    // eslint-disable-next-line require-atomic-updates
-+    lastPayload = payload
-+  }).catch(() => {
-+    console.warn('System queue sync failed')
-+  })
-+}
-+
-+export const initializeSystemQueue = () => {
-+  if (initialized) return
-+  initialized = true
-+  const schedule = () => {
-+    if (scheduled) return
-+    scheduled = true
-+    setTimeout(() => {
-+      scheduled = false
-+      syncSystemQueue()
-+    }, 0)
-+  }
-+  global.app_event.on('musicToggled', schedule)
-+  global.app_event.on('myListMusicUpdate', schedule)
-+  global.app_event.on('downloadListUpdate', schedule)
-+  global.state_event.on('playInfoChanged', schedule)
-+  global.state_event.on('playTempPlayListChanged', schedule)
-+  global.state_event.on('playMusicInfoChanged', schedule)
-+  schedule()
-+}
