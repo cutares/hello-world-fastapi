@@ -58,7 +58,7 @@ index f203997..814b76b 100644
          android:grantUriPermissions="true">
          <!-- you might need the tools:replace thing to workaround rn-fetch-blob or other definitions of provider -->
 diff --git a/package.json b/package.json
-index bd9d2ce..a0f4ff0 100644
+index bd9d2ce..bcca98c 100644
 --- a/package.json
 +++ b/package.json
 @@ -1,7 +1,7 @@
@@ -66,7 +66,7 @@ index bd9d2ce..a0f4ff0 100644
    "name": "lx-music-mobile",
    "version": "1.9.1",
 -  "versionCode": 78,
-+  "versionCode": 82,
++  "versionCode": 83,
    "private": true,
    "scripts": {
      "dev": "react-native run-android --active-arch-only",
@@ -707,6 +707,71 @@ index 441e6cd..9dde5af 100644
    await setVolume(volume)
    await setPlaybackRate(playRate)
    // listenEvent()
+diff --git a/src/plugins/player/playList.ts b/src/plugins/player/playList.ts
+index 7833959..ce1ef9e 100644
+--- a/src/plugins/player/playList.ts
++++ b/src/plugins/player/playList.ts
+@@ -4,6 +4,7 @@ import { defaultUrl } from '@/config'
+ // import { action as playerAction } from '@/store/modules/player'
+ import settingState from '@/store/setting/state'
+ import playerState from '@/store/player/state'
++import { syncSystemQueue, getCurrentSystemMediaId, getSystemMediaGeneration } from './systemQueue'
+ 
+ 
+ const list: LX.Player.Track[] = []
+@@ -56,6 +57,8 @@ const buildTracks = (musicInfo: LX.Player.PlayMusic, url?: LX.Player.Track['url'
+       artwork,
+       userAgent: defaultUserAgent,
+       musicId: mInfo.id,
++      systemMediaId: getCurrentSystemMediaId(),
++      systemGeneration: getSystemMediaGeneration(),
+       lyric,
+       // original: { ...musicInfo },
+       duration,
+@@ -148,7 +151,11 @@ export const initTrackInfo = async(musicInfo: LX.Player.PlayMusic, mInfo: LX.Pla
+ 
+ 
+ const handlePlayMusic = async(musicInfo: LX.Player.PlayMusic, url: string, time: number) => {
+-// console.log(tracks, time)
++  // Bind the real engine item only after its system queue context is published.
++  const context = playerState.playMusicInfo
++  if (context.musicInfo?.id !== musicInfo.id) return
++  await syncSystemQueue()
++  if (context !== playerState.playMusicInfo) return
+   const tracks = buildTracks(musicInfo, url)
+   const track = tracks[0]
+   // await updateMusicInfo(track)
+@@ -197,6 +204,10 @@ export const playMusic = (musicInfo: LX.Player.PlayMusic, url: string, time: num
+ // let duration = 0
+ let prevArtwork: string | undefined
+ const updateMetaInfo = async(mInfo: LX.Player.MusicInfo) => {
++  const context = playerState.playMusicInfo
++  const systemMediaId = getCurrentSystemMediaId()
++  const systemGeneration = getSystemMediaGeneration()
++  if (!systemMediaId || context.musicInfo?.id !== mInfo.id) return
+   const isShowNotificationImage = settingState.setting['player.isShowNotificationImage']
+   // const mInfo = formatMusicInfo(musicInfo)
+   // console.log('+++++updateMusicPic+++++', track.artwork, track.duration)
+@@ -210,7 +221,9 @@ const updateMetaInfo = async(mInfo: LX.Player.MusicInfo) => {
+   //   duration = global.playInfo.duration || 0
+   // }
+   // console.log('+++++updateMetaInfo+++++', mInfo.name)
+-  state.isPlaying = await TrackPlayer.getState() == State.Playing
++  const isPlaying = await TrackPlayer.getState() == State.Playing
++  if (context !== playerState.playMusicInfo || systemGeneration !== getSystemMediaGeneration()) return
++  state.isPlaying = isPlaying
+   let artwork = isShowNotificationImage ? mInfo.pic ?? prevArtwork : undefined
+   if (mInfo.pic) prevArtwork = mInfo.pic
+   let title: string
+@@ -223,6 +236,8 @@ const updateMetaInfo = async(mInfo: LX.Player.MusicInfo) => {
+     artist = `${mInfo.name}${mInfo.singer ? ` - ${mInfo.singer}` : ''}`
+   }
+   await TrackPlayer.updateNowPlayingMetadata({
++    systemMediaId,
++    systemGeneration,
+     title,
+     artist,
+     album: mInfo.album ?? undefined,
 diff --git a/src/plugins/player/service.ts b/src/plugins/player/service.ts
 index 91b2502..36c70ae 100644
 --- a/src/plugins/player/service.ts
@@ -733,7 +798,7 @@ index 91b2502..36c70ae 100644
      play()
 diff --git a/src/plugins/player/systemMedia.ts b/src/plugins/player/systemMedia.ts
 new file mode 100644
-index 0000000..648ef08
+index 0000000..1b049f5
 --- /dev/null
 +++ b/src/plugins/player/systemMedia.ts
 @@ -0,0 +1,130 @@
@@ -744,7 +809,7 @@ index 0000000..648ef08
 +import { LIST_IDS } from '@/config/constant'
 +import { getListMusics } from '@/utils/listManage'
 +import { addListMusics, removeListMusics } from '@/core/list'
-+import { getCurrentSystemMediaId, syncSystemQueue, getSystemMediaGeneration, advanceSystemMediaGeneration } from './systemQueue'
++import { getCurrentSystemMediaId, syncSystemQueue, getSystemMediaGeneration } from './systemQueue'
 +
 +let initialized = false
 +let context = playerState.playMusicInfo
@@ -848,7 +913,7 @@ index 0000000..648ef08
 +  initialized = true
 +  const sync = () => { void syncSystemMedia() }
 +  const clear = () => {
-+    generation = advanceSystemMediaGeneration()
++    // Stop/error may resume the same engine item; preserve its identity generation.
 +    stopped = true
 +    sync()
 +  }
@@ -869,10 +934,10 @@ index 0000000..648ef08
 +}
 diff --git a/src/plugins/player/systemQueue.ts b/src/plugins/player/systemQueue.ts
 new file mode 100644
-index 0000000..d398f68
+index 0000000..fe56b84
 --- /dev/null
 +++ b/src/plugins/player/systemQueue.ts
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,106 @@
 +import { NativeModules, Platform } from 'react-native'
 +import playerState from '@/store/player/state'
 +import { getList } from '@/core/player/playInfo'
@@ -895,10 +960,6 @@ index 0000000..d398f68
 +    mediaGeneration++
 +  }
 +  return mediaGeneration
-+}
-+export const advanceSystemMediaGeneration = () => {
-+  getSystemMediaGeneration()
-+  return ++mediaGeneration
 +}
 +export const getCurrentSystemMediaId = () => publishedContext === playerState.playMusicInfo && publishedGeneration === getSystemMediaGeneration() ? currentSystemMediaId : ''
 +let updating = Promise.resolve()

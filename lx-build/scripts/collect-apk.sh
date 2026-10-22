@@ -6,7 +6,7 @@ mapfile -t APKS < <(find "$ROOT/source/android/app/build/outputs/apk/release" -m
 SDK="${ANDROID_HOME:?}"
 "$SDK/build-tools/35.0.0/apksigner" verify "${APKS[0]}"
 BADGING="$("$SDK/build-tools/35.0.0/aapt2" dump badging "${APKS[0]}")"
-grep -q "package: name='com.luna.music' versionCode='82003'" <<< "$BADGING"
+grep -q "package: name='com.luna.music' versionCode='83003'" <<< "$BADGING"
 grep -q "native-code: 'arm64-v8a'" <<< "$BADGING"
 mkdir -p "$ROOT/apk-artifact"
 cp "${APKS[0]}" "$ROOT/apk-artifact/LX-v1.9.1-originos-arm64-TEMP-SIGNED.apk"

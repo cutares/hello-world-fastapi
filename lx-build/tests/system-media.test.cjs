@@ -31,7 +31,7 @@ function fixture() {
       removeListMusics: async(id, ids) => { assert.equal(id, 'love'); writes.push(['remove', ids]); if (waitWrite) await waitWrite; for (let i = favorites.length - 1; i >= 0; i--) if (ids.includes(favorites[i].id)) favorites.splice(i, 1); emit('myListMusicUpdate', ['love']) },
     };
     if (name === '@/core/common') return { updateSetting: values => { Object.assign(settings.setting, values); emit('configUpdated', Object.keys(values), values) } };
-    if (name === './systemQueue') return { getSystemMediaGeneration: getGeneration, advanceSystemMediaGeneration: () => { getGeneration(); return ++queueGeneration }, getCurrentSystemMediaId: () => state.playMusicInfo.musicInfo?.id || '', syncSystemQueue: async() => { if (waitQueue) await waitQueue } };
+    if (name === './systemQueue') return { getSystemMediaGeneration: getGeneration, getCurrentSystemMediaId: () => state.playMusicInfo.musicInfo?.id || '', syncSystemQueue: async() => { if (waitQueue) await waitQueue } };
     throw Error(name);
   } };
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, sandbox);
@@ -39,6 +39,13 @@ function fixture() {
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 10));
 (async() => {
+  // Lyrics may arrive before setup/listeners; initialization must publish retained state.
+  const cold = fixture(); cold.sandbox.global.lx.playerStatus.isInitialized = false;
+  cold.state.musicInfo.lrc = '[00:03.00]Loaded before player setup';
+  await cold.api.syncSystemMedia(); assert.equal(cold.calls.length, 0);
+  cold.sandbox.global.lx.playerStatus.isInitialized = true;
+  cold.api.initializeSystemMedia(); await cold.api.syncSystemMedia(true);
+  assert.equal(cold.calls.at(-1)[2], '[00:03.00]Loaded before player setup');
   const f = fixture(); f.api.initializeSystemMedia(); f.api.initializeSystemMedia();
   assert.equal(f.callbacks['remote-play-mode-change'].length, 1); assert.equal(f.callbacks['remote-favorite-change'].length, 1);
   await f.api.syncSystemMedia(true);
@@ -48,8 +55,15 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 10));
   for (const special of ['list', 'none']) { f.settings.setting['player.togglePlayMethod'] = special; await f.api.syncSystemMedia(); assert.equal(f.api.getSystemRepeatMode(), 0); }
   assert.equal(f.modes.at(-1), 0);
   const before = f.calls.length; f.emit('pause'); await flush(); assert.equal(f.calls.length, before);
+  const engineGeneration = f.calls.at(-1)[1];
   f.emit('stop'); await flush(); assert.equal(f.calls.at(-1)[2], '');
+  assert.equal(f.calls.at(-1)[1], engineGeneration, 'stop keeps reusable engine identity');
   f.emit('play'); await flush(); assert.equal(f.calls.at(-1)[2], '[00:01.00]A');
+  assert.equal(f.calls.at(-1)[1], engineGeneration);
+  f.emit('error'); await flush(); assert.equal(f.calls.at(-1)[2], '');
+  assert.equal(f.calls.at(-1)[1], engineGeneration, 'temporary error must not detach native timing');
+  f.emit('play'); await flush(); assert.equal(f.calls.at(-1)[2], '[00:01.00]A');
+  assert.equal(f.calls.at(-1)[1], engineGeneration, 'same-track recovery retains generation');
   const oldGeneration = f.calls.at(-1)[1];
   f.state.playMusicInfo = { musicInfo: { id: 'b' } }; f.state.musicInfo = { id: 'b', lrc: null }; f.emit('playMusicInfoChanged'); await flush();
   assert.equal(f.calls.at(-1)[0], 'b'); assert.equal(f.calls.at(-1)[2], ''); assert.ok(f.calls.at(-1)[1] > oldGeneration);

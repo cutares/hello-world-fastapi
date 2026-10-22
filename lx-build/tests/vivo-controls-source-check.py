@@ -25,7 +25,7 @@ assert 'MAX_LYRIC_CHARS = 65536' in m and 'lyric.length() > MAX_LYRIC_CHARS ? NO
 assert '[00:00.00]暂无歌词' in m
 for key in ['vivomusicmix.meida.extra.key.action','vivomusicmix.extra.lrc_change','vivomusicmix.extra.key.meidia_id','vivomusicmix.extra.key.lyric']:
  assert key in m
-lyric=method(m,'private void publishLyrics')
+lyric=method(m,'private void sendLyricExtras')
 assert 'session.getController().getExtras()' in lyric and 'new Bundle(current)' in lyric
 assert 'session.setExtras(extras)' in lyric
 queue=method(m,'public void setSystemQueue')

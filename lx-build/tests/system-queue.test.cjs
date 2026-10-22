@@ -68,7 +68,7 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 5));
   atomic.state.playMusicInfo = { listId: 'main', musicInfo: music('4') };
   await atomic.api.syncSystemQueue();
   assert.ok(atomic.calls[1][2] > first && atomic.calls[2][2] > atomic.calls[1][2]);
-  atomic.api.advanceSystemMediaGeneration(); await atomic.api.syncSystemQueue();
+  atomic.state.playMusicInfo = { listId: 'main', musicInfo: music('4') }; await atomic.api.syncSystemQueue();
   assert.ok(atomic.calls[3][2] > atomic.calls[2][2]);
   const failedContext = fixture(true, true); await failedContext.api.syncSystemQueue();
   assert.equal(failedContext.api.getCurrentSystemMediaId(), '', 'unpublished context has no media ID');

@@ -143,7 +143,7 @@ index 8282e5b..3d7df35 100644
  
    /**
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java b/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java
-index f41035a..f7ba87a 100644
+index f41035a..c715ec7 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/service/MusicBinder.java
 @@ -1,6 +1,7 @@
@@ -154,7 +154,13 @@ index f41035a..f7ba87a 100644
  import android.os.Bundle;
  import android.support.v4.media.session.MediaSessionCompat;
  
-@@ -60,6 +61,26 @@ public class MusicBinder extends Binder {
+@@ -55,11 +56,32 @@ public class MusicBinder extends Binder {
+     public void updateNowPlayingMetadata(NowPlayingMetadata nowPlaying, boolean isPlaying) {
+         MetadataManager metadata = manager.getMetadata();
+ 
++        if (!metadata.acceptsSystemMetadata(nowPlaying)) return;
+         // TODO elapsedTime
+         metadata.updateMetadata(getPlayback(), nowPlaying, isPlaying);
          metadata.setActive(true);
      }
  
@@ -181,7 +187,16 @@ index f41035a..f7ba87a 100644
      public void clearNowPlayingMetadata() {
          manager.getMetadata().setActive(false);
      }
-@@ -77,7 +98,7 @@ public class MusicBinder extends Binder {
+@@ -69,7 +91,7 @@ public class MusicBinder extends Binder {
+       metadata.updateTitles(data);
+       MediaSessionCompat session = metadata.getSession();
+       if (session.isActive()) return;
+-      session.setActive(true);
++      metadata.setActive(true);
+     }
+ 
+     public int getRatingType() {
+@@ -77,7 +99,7 @@ public class MusicBinder extends Binder {
      }
  
      public void destroy() {
@@ -191,7 +206,7 @@ index f41035a..f7ba87a 100644
      }
  
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/MusicService.java b/android/src/main/java/com/guichaguri/trackplayer/service/MusicService.java
-index 505f244..e13a0af 100644
+index 505f244..ee31c12 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/service/MusicService.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/service/MusicService.java
 @@ -4,6 +4,16 @@ import android.content.Intent;
@@ -283,7 +298,7 @@ index 505f244..e13a0af 100644
          super.onStartCommand(intent, flags, startId);
          return START_NOT_STICKY;
      }
-@@ -115,15 +152,86 @@ public class MusicService extends HeadlessJsTaskService {
+@@ -115,15 +152,87 @@ public class MusicService extends HeadlessJsTaskService {
      @Override
      public void onCreate() {
          super.onCreate();
@@ -344,6 +359,7 @@ index 505f244..e13a0af 100644
 +        if (vivoList && vivoSubscribedParents.size() < 16) vivoSubscribedParents.add(parentId);
 +        List<MediaBrowserCompat.MediaItem> items = knownRoot ? getBrowserItems(vivoList) : new ArrayList<>();
 +        result.sendResult(items);
++        if (knownRoot && manager != null) manager.getMetadata().replaySystemLyrics();
 +    }
 +
 +    @Override
@@ -373,7 +389,7 @@ index 505f244..e13a0af 100644
          stopForeground(true);
      }
  
-@@ -135,7 +243,7 @@ public class MusicService extends HeadlessJsTaskService {
+@@ -135,7 +244,7 @@ public class MusicService extends HeadlessJsTaskService {
              if (manager != null && manager.getPlayback() != null) {
                  manager.getPlayback().stop();
              }
@@ -451,7 +467,7 @@ index 7f3773b..3178600 100644
          Utils.setRating(bundle, "rating", rating);
          service.emit(MusicEvents.BUTTON_SET_RATING, bundle);
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java b/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
-index e185728..e18f327 100644
+index e185728..3b5f8da 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
 @@ -16,7 +16,11 @@ import android.graphics.drawable.Drawable;
@@ -475,7 +491,7 @@ index e185728..e18f327 100644
  
  /**
   * @author Guichaguri
-@@ -51,10 +57,174 @@ import java.util.List;
+@@ -51,10 +57,259 @@ import java.util.List;
  @UnstableApi
  public class MetadataManager {
  
@@ -492,6 +508,10 @@ index e185728..e18f327 100644
 +    private boolean systemFavorite = false;
 +    private int systemRepeatMode = 0;
 +    private boolean destroyed = false;
++    private String cachedLyricId = null;
++    private long cachedLyricGeneration = -1;
++    private String cachedLyric = null;
++    private boolean lyricsAwaitingReady = false;
 +
 +    public boolean setSystemLyrics(String mediaId, long generation, String lyric) {
 +        String activeId = systemQueueIds.get(activeSystemQueueId);
@@ -523,6 +543,41 @@ index e185728..e18f327 100644
 +    }
 +
 +    private void publishLyrics(String mediaId, String lyric) {
++        cachedLyricId = mediaId;
++        cachedLyricGeneration = lyricGeneration;
++        cachedLyric = lyric;
++        lyricsAwaitingReady = true;
++        sendLyricExtras(mediaId, lyric);
++        if (canReplaySystemLyrics()) lyricsAwaitingReady = false;
++    }
++
++    private boolean canReplaySystemLyrics() {
++        if (destroyed || cachedLyric == null || cachedLyricId == null ||
++                cachedLyricGeneration != lyricGeneration ||
++                !cachedLyricId.equals(systemQueueIds.get(activeSystemQueueId)) || !session.isActive()) return false;
++        MediaMetadataCompat metadata = session.getController().getMetadata();
++        ExoPlayback playback = manager.getPlayback();
++        if (metadata == null || !cachedLyricId.equals(metadata.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID)) ||
++                playback == null || !matchesSystemContext(playback.getCurrentTrack())) return false;
++        int state = playback.getState();
++        PlaybackStateCompat publishedState = session.getController().getPlaybackState();
++        return (state == PlaybackStateCompat.STATE_PLAYING || state == PlaybackStateCompat.STATE_PAUSED) &&
++                publishedState != null && publishedState.getState() == state &&
++                publishedState.getActiveQueueItemId() == activeSystemQueueId;
++    }
++
++    /** Replay after a real subscriber attaches, not on a polling timer. */
++    public void replaySystemLyrics() {
++        if (!canReplaySystemLyrics()) return;
++        sendLyricExtras(cachedLyricId, cachedLyric);
++        lyricsAwaitingReady = false;
++    }
++
++    private void flushPendingLyrics() {
++        if (lyricsAwaitingReady) replaySystemLyrics();
++    }
++
++    private void sendLyricExtras(String mediaId, String lyric) {
 +        // Preserve unrelated extras; misspellings are the shipping vivo ABI.
 +        Bundle current = session.getController().getExtras();
 +        Bundle extras = current == null ? new Bundle() : new Bundle(current);
@@ -613,9 +668,55 @@ index e185728..e18f327 100644
 +        return text.length() > 128 ? text.substring(0, 128) : text;
 +    }
 +
++    public boolean acceptsSystemMetadata(TrackMetadata track) {
++        // Preserve upstream callers without our optional context fields.
++        if (track.systemMediaId == null && track.systemGeneration < 0) return true;
++        return matchesSystemContext(track);
++    }
++
++    private boolean matchesSystemContext(TrackMetadata track) {
++        String activeId = systemQueueIds.get(activeSystemQueueId);
++        return !destroyed && track != null && activeId != null &&
++                activeId.equals(track.systemMediaId) && track.systemGeneration == lyricGeneration;
++    }
++
++    public void refreshSystemTiming(ExoPlayback playback) {
++        if (playback != manager.getPlayback() || !matchesSystemContext(playback.getCurrentTrack())) return;
++        // Do not rebuild titles/artwork or touch lyric/loop/heart state.
++        if (prevMetadata != null) publishMetadata(prevMetadata);
++        updatePlaybackState(playback);
++    }
++
++    private MediaMetadataCompat.Builder withoutDuration(MediaMetadataCompat source) {
++        MediaMetadataCompat.Builder result = new MediaMetadataCompat.Builder();
++        Bundle values = source.getBundle();
++        for (String key : values.keySet()) {
++            if (METADATA_KEY_DURATION.equals(key)) continue;
++            if (MediaMetadataCompat.METADATA_KEY_RATING.equals(key) ||
++                    MediaMetadataCompat.METADATA_KEY_USER_RATING.equals(key)) {
++                result.putRating(key, source.getRating(key));
++                continue;
++            }
++            Object value = values.get(key);
++            if (value instanceof Long) result.putLong(key, (Long) value);
++            else if (value instanceof Bitmap) result.putBitmap(key, (Bitmap) value);
++            else if (value instanceof CharSequence) result.putText(key, (CharSequence) value);
++        }
++        return result;
++    }
++
 +    private void publishMetadata(MediaMetadataCompat.Builder metadata) {
 +        // Fresh overlay: mode 0 removes LOOP_MODE rather than retaining an old value.
 +        metadata = new MediaMetadataCompat.Builder(metadata.build());
++        if (lyricGeneration >= 0) {
++            // A stale JS duration=0 (or previous-song hint) must not override the real timeline.
++            metadata = withoutDuration(metadata.build());
++            ExoPlayback playback = manager.getPlayback();
++            if (playback != null && matchesSystemContext(playback.getCurrentTrack())) {
++                long duration = playback.getTimelineDuration();
++                if (duration > 0) metadata.putLong(METADATA_KEY_DURATION, duration);
++            }
++        }
 +        long support = VIVO_BASIC_SUPPORT | (systemQueue.isEmpty() ? 0L : VIVO_QUEUE_SUPPORT);
 +        if (systemRepeatMode >= 1 && systemRepeatMode <= 3) support |= 128L;
 +        metadata.putLong(VIVO_SUPPORT_EVENT, support);
@@ -650,7 +751,7 @@ index e185728..e18f327 100644
      private int ratingType = RatingCompat.RATING_NONE;
      private int forwardJumpInterval = 15;
      private int backwardJumpInterval = 15;
-@@ -78,7 +248,7 @@ public class MetadataManager {
+@@ -78,7 +333,7 @@ public class MetadataManager {
          this.session = new MediaSessionCompat(service, "TrackPlayer", null, null);
  
          session.setFlags(MediaSessionCompat.FLAG_HANDLES_QUEUE_COMMANDS);
@@ -659,7 +760,7 @@ index e185728..e18f327 100644
  
          Context context = service.getApplicationContext();
          String packageName = context.getPackageName();
-@@ -196,6 +366,7 @@ public class MetadataManager {
+@@ -196,6 +451,7 @@ public class MetadataManager {
       * @param bitmap The new artwork
       */
      protected void updateArtwork(Bitmap bitmap) {
@@ -667,7 +768,7 @@ index e185728..e18f327 100644
          Track track = manager.getPlayback().getCurrentTrack();
          if(track == null) return;
  
-@@ -204,7 +375,7 @@ public class MetadataManager {
+@@ -204,7 +460,7 @@ public class MetadataManager {
          metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bitmap);
          builder.setLargeIcon(bitmap);
  
@@ -676,7 +777,7 @@ index e185728..e18f327 100644
          updateNotification();
      }
  
-@@ -222,7 +393,7 @@ public class MetadataManager {
+@@ -222,7 +478,7 @@ public class MetadataManager {
        if (data.containsKey("lyric")) {
          prevMetadata.putString("android.media.metadata.LYRICS", data.getString("lyric"));
        }
@@ -685,7 +786,15 @@ index e185728..e18f327 100644
        updatePlaybackState(manager.getPlayback());
      }
  
-@@ -255,12 +426,13 @@ public class MetadataManager {
+@@ -231,6 +487,7 @@ public class MetadataManager {
+      * @param track The new track
+      */
+     public void updateMetadata(ExoPlayback playback, TrackMetadata track, boolean isPlaying) {
++        if (!acceptsSystemMetadata(track)) return;
+         MediaMetadataCompat.Builder metadata = track.toMediaMetadata();
+         prevMetadata = metadata;
+ 
+@@ -255,12 +512,13 @@ public class MetadataManager {
                  .into(new CustomTarget<Bitmap>() {
                      @Override
                      public void onResourceReady(@NonNull Bitmap resource, Transition<? super Bitmap> transition) {
@@ -700,7 +809,7 @@ index e185728..e18f327 100644
                          updateNotification();
                          artworkTarget = null;
                      }
-@@ -274,7 +446,7 @@ public class MetadataManager {
+@@ -274,7 +532,7 @@ public class MetadataManager {
          builder.setContentText(track.artist);
          builder.setSubText(track.album);
  
@@ -709,7 +818,7 @@ index e185728..e18f327 100644
  
          updatePlayback(isPlaying);
          updatePlaybackState(playback);
-@@ -340,7 +512,7 @@ public class MetadataManager {
+@@ -340,7 +598,7 @@ public class MetadataManager {
  
      @SuppressLint("RestrictedApi")
      public void updatePlayback(ExoPlayback playback, boolean playing) {
@@ -718,19 +827,39 @@ index e185728..e18f327 100644
          updatePlayback(playing);
          updatePlaybackState(playback);
          updateNotification();
-@@ -354,6 +526,7 @@ public class MetadataManager {
+@@ -354,20 +612,38 @@ public class MetadataManager {
          // Updates the media session state
          PlaybackStateCompat.Builder pb = new PlaybackStateCompat.Builder();
          pb.setActions(actions);
+-        pb.setState(playback.getState(), playback.getPosition(), playback.getRate());
+-        pb.setBufferedPosition(playback.getBufferedPosition());
 +        pb.setActiveQueueItemId(activeSystemQueueId);
-         pb.setState(playback.getState(), playback.getPosition(), playback.getRate());
-         pb.setBufferedPosition(playback.getBufferedPosition());
++        if (playback == null || (lyricGeneration >= 0 && !matchesSystemContext(playback.getCurrentTrack()))) {
++            pb.setState(activeSystemQueueId == MediaSessionCompat.QueueItem.UNKNOWN_ID ?
++                    PlaybackStateCompat.STATE_NONE : PlaybackStateCompat.STATE_BUFFERING, 0, 0);
++            pb.setBufferedPosition(0);
++        } else {
++            pb.setState(playback.getState(), playback.getPosition(), playback.getRate());
++            pb.setBufferedPosition(playback.getBufferedPosition());
++        }
  
-@@ -368,6 +541,12 @@ public class MetadataManager {
+         session.setPlaybackState(pb.build());
++        flushPendingLyrics();
+     }
+ 
+     public void setActive(boolean active) {
+         if (session.isActive() == active) return;
+         this.session.setActive(active);
++        if (active) replaySystemLyrics();
+ 
+         updateNotification();
      }
  
      public void destroy() {
 +        destroyed = true;
++        cachedLyric = null;
++        cachedLyricId = null;
++        lyricsAwaitingReady = false;
 +        if (artworkTarget != null) {
 +            Glide.with(service.getApplicationContext()).clear(artworkTarget);
 +            artworkTarget = null;
@@ -739,3 +868,73 @@ index e185728..e18f327 100644
          service.stopForeground(true);
  
          session.setActive(false);
+diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/models/TrackMetadata.java b/android/src/main/java/com/guichaguri/trackplayer/service/models/TrackMetadata.java
+index 4f7afe7..daf5f05 100644
+--- a/android/src/main/java/com/guichaguri/trackplayer/service/models/TrackMetadata.java
++++ b/android/src/main/java/com/guichaguri/trackplayer/service/models/TrackMetadata.java
+@@ -21,6 +21,8 @@ import com.guichaguri.trackplayer.service.Utils;
+ 
+ @UnstableApi
+ public abstract class TrackMetadata {
++    public String systemMediaId;
++    public long systemGeneration = -1;
+     public Uri artwork;
+ 
+     public String title;
+@@ -34,6 +36,12 @@ public abstract class TrackMetadata {
+     public RatingCompat rating;
+ 
+     public void setMetadata(Context context, Bundle bundle, int ratingType) {
++      if (bundle.containsKey("systemMediaId")) systemMediaId = bundle.getString("systemMediaId");
++      if (bundle.containsKey("systemGeneration")) {
++        double generation = bundle.getDouble("systemGeneration", -1);
++        systemGeneration = Double.isNaN(generation) || Double.isInfinite(generation) || generation < 0 ||
++            generation > 9007199254740991D || generation != Math.floor(generation) ? -1 : (long) generation;
++      }
+       if (bundle.containsKey("artwork")) {
+         artwork = Utils.getUri(context, bundle, "artwork");
+       }
+diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/player/ExoPlayback.java b/android/src/main/java/com/guichaguri/trackplayer/service/player/ExoPlayback.java
+index ba1342b..1716b3e 100644
+--- a/android/src/main/java/com/guichaguri/trackplayer/service/player/ExoPlayback.java
++++ b/android/src/main/java/com/guichaguri/trackplayer/service/player/ExoPlayback.java
+@@ -210,6 +210,26 @@ public abstract class ExoPlayback<T extends Player> implements Player.Listener,
+         return duration == C.TIME_UNSET ? 0 : duration;
+     }
+ 
++    /** The loaded engine timeline, never the optional JS duration hint. */
++    public long getTimelineDuration() {
++        long duration = player.getDuration();
++        return duration == C.TIME_UNSET || duration <= 0 ? 0 : duration;
++    }
++
++    @Override
++    public void onEvents(Player source, Player.Events events) {
++        // Timing must remain live even when LX owns titles/artwork (autoUpdateMetadata=false).
++        if (events.contains(Player.EVENT_TIMELINE_CHANGED) ||
++                events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) ||
++                events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED) ||
++                events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
++                events.contains(Player.EVENT_POSITION_DISCONTINUITY) ||
++                events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
++                events.contains(Player.EVENT_PLAYBACK_PARAMETERS_CHANGED)) {
++            manager.getMetadata().refreshSystemTiming(this);
++        }
++    }
++
+     public void seekTo(long time) {
+         if (queue.isEmpty()) return;
+         lastKnownWindow = player.getCurrentMediaItemIndex();
+diff --git a/src/interfaces.ts b/src/interfaces.ts
+index e42a62e..6572ce7 100644
+--- a/src/interfaces.ts
++++ b/src/interfaces.ts
+@@ -210,6 +210,8 @@ export enum State {
+ }
+ 
+ export interface TrackMetadataBase {
++  systemMediaId?: string
++  systemGeneration?: number
+   title?: string
+   album?: string
+   artist?: string
