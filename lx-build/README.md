@@ -1,6 +1,6 @@
 # LX OriginOS ARM64 定制构建
 
-当前显示版本为 1.9.1，ARM64 内部版本号为 84003。保留 vivo 系统播放列表适配，已移除自动/手动应用更新检查以及测试诊断功能。
+当前显示版本为 1.9.1，ARM64 内部版本号为 85003。保留 vivo 系统播放列表适配，已移除自动/手动应用更新检查以及测试诊断功能。
 
 仅 lx-originos-build 分支 push 触发。使用标准 Ubuntu runner、只读仓库权限、固定 Actions 和上游提交；无定时追更、无自动发布、无部署、无专用签名私钥。
 
@@ -23,3 +23,8 @@
 84003 针对首曲晚订阅交付：使用当前曲目事件驱动、可合并的 200 ms 单次歌词重发；同曲缓存也重新发布。它不是循环定时器、不轮询、不改歌词源、不强开蓝牙歌词。迟到任务必须重新验证当前 ID/代次、会话和播放器状态，不能把旧曲歌词写入新曲。
 
 JS 首曲不同到达时序测试、原生源码检查和执行真实 MetadataManager/ButtonEvents 的 Java stub harness 用于回归。Stub 测试不等于真实 Android/OriginOS 兼容性测试；84003 首曲问题是否解决仍需用户实机验证。
+
+## 85003 外观更新
+桌面显示名称及竖/横屏菜单文字为 Music，采用用户选定的 B 黑胶标识：奶油底、黑盘、橙色单弧、中心孔。内部 RN 注册名、包名 com.luna.music、签名配置、84003 播控逻辑及上游授权/致谢均保留。暗底菜单以细奶油轮廓保证黑盘边界可见，不强制更改主题。
+
+`source/scripts/generate-branding.py` 仅使用 Python 标准库从可审计几何生成 10 个 legacy PNG 和 adaptive vector；`--check` 校验资源逐字节一致。累计 app 补丁含 `GIT binary patch`，由现有 `git apply --check`/`git apply` 处理；不使用不支持 binary 的 patch 工具应用 app 补丁。生成资源不含概念图文字、私钥或外部图片。

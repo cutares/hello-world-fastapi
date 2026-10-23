@@ -60,6 +60,8 @@ jobs:
         run: bash lx-build/scripts/patch-dependency.sh
       - name: Focused checks
         run: |
+          python3 lx-build/tests/branding.test.py
+          node lx-build/tests/branding-logo.test.cjs
           node lx-build/tests/timing-identity.test.cjs
           node lx-build/tests/system-media.test.cjs
           node lx-build/tests/lyric-request-race.test.cjs
@@ -74,7 +76,7 @@ jobs:
           python3 lx-build/tests/vivo-lyrics-replay-source-check.py
           python3 lx-build/tests/native-lyrics/run.py
           cd source
-          npx --no-install eslint src/plugins/player/playList.ts src/plugins/player/systemMedia.ts src/plugins/player/systemQueue.ts src/plugins/player/index.ts src/plugins/player/service.ts src/plugins/player/utils.ts src/core/player/player.ts src/screens/Home/Views/Setting/settings/Version.tsx
+          npx --no-install eslint src/components/common/MusicLogo.tsx src/screens/Home/Vertical/DrawerNav.tsx src/screens/Home/Horizontal/Aside.tsx src/plugins/player/playList.ts src/plugins/player/systemMedia.ts src/plugins/player/systemQueue.ts src/plugins/player/index.ts src/plugins/player/service.ts src/plugins/player/utils.ts src/core/player/player.ts src/screens/Home/Views/Setting/settings/Version.tsx
       - name: Ensure Android SDK packages
         run: bash lx-build/scripts/prepare-sdk.sh
       - name: Build ARM64 release with public temporary test signer
