@@ -46,6 +46,29 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 10));
   cold.sandbox.global.lx.playerStatus.isInitialized = true;
   cold.api.initializeSystemMedia(); await cold.api.syncSystemMedia(true);
   assert.equal(cold.calls.at(-1)[2], '[00:03.00]Loaded before player setup');
+  // Restored first song: setup publishes empty state, lyric resolves while the
+  // native placeholder is paused, then the real engine starts the same context.
+  const restored = fixture(); restored.state.musicInfo.lrc = null;
+  restored.api.initializeSystemMedia(); await restored.api.syncSystemMedia(true);
+  const restoredGeneration = restored.calls.at(-1)[1];
+  assert.equal(restored.calls.at(-1)[2], '');
+  restored.emit('pause');
+  restored.state.musicInfo.lrc = '[00:04.00]Restored first song';
+  restored.emit('playerMusicInfoChanged', { ...restored.state.musicInfo });
+  restored.emit('lyricUpdated'); await restored.api.syncSystemMedia();
+  assert.equal(restored.calls.at(-1)[2], '[00:04.00]Restored first song');
+  const published = restored.calls.length;
+  restored.emit('play'); await restored.api.syncSystemMedia();
+  assert.equal(restored.calls.at(-1)[1], restoredGeneration);
+  assert.equal(restored.calls.at(-1)[2], '[00:04.00]Restored first song');
+  assert.equal(restored.calls.length, published, 'unchanged JS payload relies on native late-subscriber delivery');
+  // The inverse timing, lyric arriving after engine play, must also publish.
+  const late = fixture(); late.state.musicInfo.lrc = null;
+  late.api.initializeSystemMedia(); await late.api.syncSystemMedia(true);
+  late.emit('play'); await late.api.syncSystemMedia();
+  late.state.musicInfo.lrc = '[00:05.00]Late first-song lyric';
+  late.emit('lyricUpdated'); await late.api.syncSystemMedia();
+  assert.equal(late.calls.at(-1)[2], '[00:05.00]Late first-song lyric');
   const f = fixture(); f.api.initializeSystemMedia(); f.api.initializeSystemMedia();
   assert.equal(f.callbacks['remote-play-mode-change'].length, 1); assert.equal(f.callbacks['remote-favorite-change'].length, 1);
   await f.api.syncSystemMedia(true);

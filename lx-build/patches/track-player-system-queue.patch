@@ -467,7 +467,7 @@ index 7f3773b..3178600 100644
          Utils.setRating(bundle, "rating", rating);
          service.emit(MusicEvents.BUTTON_SET_RATING, bundle);
 diff --git a/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java b/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
-index e185728..3b5f8da 100644
+index e185728..0a6ce78 100644
 --- a/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
 +++ b/android/src/main/java/com/guichaguri/trackplayer/service/metadata/MetadataManager.java
 @@ -16,7 +16,11 @@ import android.graphics.drawable.Drawable;
@@ -491,7 +491,7 @@ index e185728..3b5f8da 100644
  
  /**
   * @author Guichaguri
-@@ -51,10 +57,259 @@ import java.util.List;
+@@ -51,10 +57,282 @@ import java.util.List;
  @UnstableApi
  public class MetadataManager {
  
@@ -511,7 +511,11 @@ index e185728..3b5f8da 100644
 +    private String cachedLyricId = null;
 +    private long cachedLyricGeneration = -1;
 +    private String cachedLyric = null;
-+    private boolean lyricsAwaitingReady = false;
++    private final Handler lyricHandler = new Handler(Looper.getMainLooper());
++    private Runnable pendingLyricReplay = null;
++    private String pendingLyricId = null;
++    private long pendingLyricGeneration = -1;
++    private String pendingLyricText = null;
 +
 +    public boolean setSystemLyrics(String mediaId, long generation, String lyric) {
 +        String activeId = systemQueueIds.get(activeSystemQueueId);
@@ -546,9 +550,8 @@ index e185728..3b5f8da 100644
 +        cachedLyricId = mediaId;
 +        cachedLyricGeneration = lyricGeneration;
 +        cachedLyric = lyric;
-+        lyricsAwaitingReady = true;
 +        sendLyricExtras(mediaId, lyric);
-+        if (canReplaySystemLyrics()) lyricsAwaitingReady = false;
++        replaySystemLyrics();
 +    }
 +
 +    private boolean canReplaySystemLyrics() {
@@ -566,15 +569,35 @@ index e185728..3b5f8da 100644
 +                publishedState.getActiveQueueItemId() == activeSystemQueueId;
 +    }
 +
-+    /** Replay after a real subscriber attaches, not on a polling timer. */
++    /** Coalesce after real metadata/playback/browser events; this is not delivery acknowledgement. */
 +    public void replaySystemLyrics() {
-+        if (!canReplaySystemLyrics()) return;
-+        sendLyricExtras(cachedLyricId, cachedLyric);
-+        lyricsAwaitingReady = false;
-+    }
-+
-+    private void flushPendingLyrics() {
-+        if (lyricsAwaitingReady) replaySystemLyrics();
++        if (!canReplaySystemLyrics()) {
++            if (pendingLyricReplay != null) lyricHandler.removeCallbacks(pendingLyricReplay);
++            pendingLyricReplay = null;
++            return;
++        }
++        final String mediaId = cachedLyricId;
++        final long generation = cachedLyricGeneration;
++        final String lyric = cachedLyric;
++        // Same-payload events share the first deadline; continuous updates cannot starve delivery.
++        if (pendingLyricReplay != null && generation == pendingLyricGeneration &&
++                mediaId.equals(pendingLyricId) && lyric.equals(pendingLyricText)) return;
++        if (pendingLyricReplay != null) lyricHandler.removeCallbacks(pendingLyricReplay);
++        pendingLyricId = mediaId;
++        pendingLyricGeneration = generation;
++        pendingLyricText = lyric;
++        pendingLyricReplay = new Runnable() {
++            @Override
++            public void run() {
++                if (pendingLyricReplay != this) return;
++                pendingLyricReplay = null;
++                if (!canReplaySystemLyrics() || generation != cachedLyricGeneration ||
++                        !mediaId.equals(cachedLyricId) || !lyric.equals(cachedLyric)) return;
++                sendLyricExtras(mediaId, lyric);
++            }
++        };
++        // Official adapter defers cached LRC after its metadata/state update by 200 ms.
++        lyricHandler.postDelayed(pendingLyricReplay, 200);
 +    }
 +
 +    private void sendLyricExtras(String mediaId, String lyric) {
@@ -751,7 +774,7 @@ index e185728..3b5f8da 100644
      private int ratingType = RatingCompat.RATING_NONE;
      private int forwardJumpInterval = 15;
      private int backwardJumpInterval = 15;
-@@ -78,7 +333,7 @@ public class MetadataManager {
+@@ -78,7 +356,7 @@ public class MetadataManager {
          this.session = new MediaSessionCompat(service, "TrackPlayer", null, null);
  
          session.setFlags(MediaSessionCompat.FLAG_HANDLES_QUEUE_COMMANDS);
@@ -760,7 +783,7 @@ index e185728..3b5f8da 100644
  
          Context context = service.getApplicationContext();
          String packageName = context.getPackageName();
-@@ -196,6 +451,7 @@ public class MetadataManager {
+@@ -196,6 +474,7 @@ public class MetadataManager {
       * @param bitmap The new artwork
       */
      protected void updateArtwork(Bitmap bitmap) {
@@ -768,7 +791,7 @@ index e185728..3b5f8da 100644
          Track track = manager.getPlayback().getCurrentTrack();
          if(track == null) return;
  
-@@ -204,7 +460,7 @@ public class MetadataManager {
+@@ -204,7 +483,7 @@ public class MetadataManager {
          metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bitmap);
          builder.setLargeIcon(bitmap);
  
@@ -777,7 +800,7 @@ index e185728..3b5f8da 100644
          updateNotification();
      }
  
-@@ -222,7 +478,7 @@ public class MetadataManager {
+@@ -222,7 +501,7 @@ public class MetadataManager {
        if (data.containsKey("lyric")) {
          prevMetadata.putString("android.media.metadata.LYRICS", data.getString("lyric"));
        }
@@ -786,7 +809,7 @@ index e185728..3b5f8da 100644
        updatePlaybackState(manager.getPlayback());
      }
  
-@@ -231,6 +487,7 @@ public class MetadataManager {
+@@ -231,6 +510,7 @@ public class MetadataManager {
       * @param track The new track
       */
      public void updateMetadata(ExoPlayback playback, TrackMetadata track, boolean isPlaying) {
@@ -794,7 +817,7 @@ index e185728..3b5f8da 100644
          MediaMetadataCompat.Builder metadata = track.toMediaMetadata();
          prevMetadata = metadata;
  
-@@ -255,12 +512,13 @@ public class MetadataManager {
+@@ -255,12 +535,13 @@ public class MetadataManager {
                  .into(new CustomTarget<Bitmap>() {
                      @Override
                      public void onResourceReady(@NonNull Bitmap resource, Transition<? super Bitmap> transition) {
@@ -809,7 +832,7 @@ index e185728..3b5f8da 100644
                          updateNotification();
                          artworkTarget = null;
                      }
-@@ -274,7 +532,7 @@ public class MetadataManager {
+@@ -274,7 +555,7 @@ public class MetadataManager {
          builder.setContentText(track.artist);
          builder.setSubText(track.album);
  
@@ -818,7 +841,7 @@ index e185728..3b5f8da 100644
  
          updatePlayback(isPlaying);
          updatePlaybackState(playback);
-@@ -340,7 +598,7 @@ public class MetadataManager {
+@@ -340,7 +621,7 @@ public class MetadataManager {
  
      @SuppressLint("RestrictedApi")
      public void updatePlayback(ExoPlayback playback, boolean playing) {
@@ -827,7 +850,7 @@ index e185728..3b5f8da 100644
          updatePlayback(playing);
          updatePlaybackState(playback);
          updateNotification();
-@@ -354,20 +612,38 @@ public class MetadataManager {
+@@ -354,20 +635,41 @@ public class MetadataManager {
          // Updates the media session state
          PlaybackStateCompat.Builder pb = new PlaybackStateCompat.Builder();
          pb.setActions(actions);
@@ -844,7 +867,7 @@ index e185728..3b5f8da 100644
 +        }
  
          session.setPlaybackState(pb.build());
-+        flushPendingLyrics();
++        replaySystemLyrics();
      }
  
      public void setActive(boolean active) {
@@ -859,7 +882,10 @@ index e185728..3b5f8da 100644
 +        destroyed = true;
 +        cachedLyric = null;
 +        cachedLyricId = null;
-+        lyricsAwaitingReady = false;
++        if (pendingLyricReplay != null) {
++            lyricHandler.removeCallbacks(pendingLyricReplay);
++            pendingLyricReplay = null;
++        }
 +        if (artworkTarget != null) {
 +            Glide.with(service.getApplicationContext()).clear(artworkTarget);
 +            artworkTarget = null;

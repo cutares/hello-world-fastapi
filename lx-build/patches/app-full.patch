@@ -58,7 +58,7 @@ index f203997..814b76b 100644
          android:grantUriPermissions="true">
          <!-- you might need the tools:replace thing to workaround rn-fetch-blob or other definitions of provider -->
 diff --git a/package.json b/package.json
-index bd9d2ce..bcca98c 100644
+index bd9d2ce..bee5576 100644
 --- a/package.json
 +++ b/package.json
 @@ -1,7 +1,7 @@
@@ -66,7 +66,7 @@ index bd9d2ce..bcca98c 100644
    "name": "lx-music-mobile",
    "version": "1.9.1",
 -  "versionCode": 78,
-+  "versionCode": 83,
++  "versionCode": 84,
    "private": true,
    "scripts": {
      "dev": "react-native run-android --active-arch-only",

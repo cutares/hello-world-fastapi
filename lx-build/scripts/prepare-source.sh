@@ -12,6 +12,6 @@ const fs = require('fs');
 const root = process.argv[2];
 const pkg = JSON.parse(fs.readFileSync(root + '/package.json'));
 const lock = JSON.parse(fs.readFileSync(root + '/package-lock.json'));
-if (pkg.version !== '1.9.1' || pkg.versionCode !== 83) throw Error('Unexpected app version');
+if (pkg.version !== '1.9.1' || pkg.versionCode !== 84) throw Error('Unexpected app version');
 if (!lock.packages['node_modules/react-native-track-player'].resolved.endsWith('#bfe33933793460e7588d4d8f38eddf7910806f29')) throw Error('Unexpected track-player commit');
 JS
